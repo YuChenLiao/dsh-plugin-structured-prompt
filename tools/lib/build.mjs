@@ -73,12 +73,12 @@ async function buildHost(build) {
   })
 }
 
-/** 构建浏览器半边。 */
+/** 构建浏览器半边（TS + JSX，入口为 src/client/index.ts）。 */
 async function buildClient(build) {
   await build({
     name: `${PLUGIN_ID}/client`,
     cwd: PLUGIN_ROOT,
-    entry: { client: resolve(PLUGIN_ROOT, 'src', 'client', 'index.js') },
+    entry: { client: resolve(PLUGIN_ROOT, 'src', 'client', 'index.ts') },
     outDir: resolve(PLUGIN_ROOT, 'lib'),
     format: ['cjs'],
     platform: 'browser',
@@ -86,7 +86,9 @@ async function buildClient(build) {
     dts: false,
     clean: false,
     sourcemap: false,
-    // 共享模块保持外部引用；其余（含 zustand/immer 等实现依赖）内联。
+    // 自动 JSX 运行时（react/jsx-runtime 已在基线模块表内）。
+    jsx: 'automatic',
+    // 共享模块保持外部引用；其余内部模块全部内联。
     deps: { neverBundle: BASELINE_MODULES },
     inputOptions: {
       resolve: {
@@ -107,6 +109,15 @@ async function buildClient(build) {
   })
 }
 
+/** 源码入口存在性检查：防止构建静默产出空产物。 */
+function assertSources() {
+  for (const relative of ['src/index.js', 'src/client/index.ts']) {
+    const file = resolve(PLUGIN_ROOT, relative)
+    if (!existsSync(file)) throw new Error(`构建入口缺失：${file}`)
+  }
+}
+
+assertSources()
 const build = await loadTsdown()
 await buildHost(build)
 await buildClient(build)

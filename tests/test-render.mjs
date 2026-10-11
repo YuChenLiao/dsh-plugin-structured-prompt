@@ -2,18 +2,15 @@
  * 离线渲染测试：用 React 服务端渲染验证两个槽位组件。
  *
  * 结构：
- *  - `StructuredInputTrigger` → `conversation.input.left`（输入框底部工具栏的入口）
- *  - `StructuredInputPanel`   → `conversation.input.dock`（表单弹窗）
+ *  - `StructuredInputTrigger`（`ui/Trigger.tsx`）→ `conversation.input.left`
+ *  - `StructuredInputPanel`（`ui/Panel.tsx`）→ `conversation.input.dock`
  *
- * 覆盖：
- *  1. 入口按钮的开关状态与禁用态；
- *  2. 弹窗只在开启时渲染，宽度固定、高度不占满、内容区滚动；
- *  3. 默认只展开「基础信息」，其余三组折叠且可展开；
- *  4. 文本域自适应高度（不写死 rows，因此内容不会展示不全）；
- *  5. 工具策略自动/手动；
- *  6. 开关来回切换不改变 hook 数量（React 会直接抛错）。
+ * 除了行为断言，这里还直接断言两个**布局不变量对象**（`ui/styles.ts` 的
+ * `sectionStyle` 与 `modalBodyStyle`）—— 历史上三次 UI 事故都出在这两个常量上：
+ * 分组被卡片 `overflow: hidden` 裁剪、滚动条没挂到内容区、分组误用 `min-height: 0`
+ * 导致子元素压叠。
  *
- * 用法：node --import ./tools/lib/loader-hook.mjs tools/test-render.mjs
+ * 用法：node --import tsx --import ./tools/lib/loader-hook.mjs tests/test-render.mjs
  */
 import { pathToFileURL } from 'node:url'
 import { resolve, dirname } from 'node:path'
@@ -21,10 +18,16 @@ import { fileURLToPath } from 'node:url'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 
-const CLIENT_SRC = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'client')
-const { createStructuredInputStore } = await import(pathToFileURL(resolve(CLIENT_SRC, 'store.js')).href)
-const { StructuredInputPanel, StructuredInputTrigger, sectionStyle, modalBodyStyle } = await import(
-  pathToFileURL(resolve(CLIENT_SRC, 'Form.js')).href
+const CLIENT = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'client')
+const { createStructuredInputStore } = await import(pathToFileURL(resolve(CLIENT, 'store.ts')).href)
+const { StructuredInputPanel } = await import(
+  pathToFileURL(resolve(CLIENT, 'ui', 'Panel.tsx')).href
+)
+const { StructuredInputTrigger } = await import(
+  pathToFileURL(resolve(CLIENT, 'ui', 'Trigger.tsx')).href
+)
+const { sectionStyle, modalBodyStyle } = await import(
+  pathToFileURL(resolve(CLIENT, 'ui', 'styles.ts')).href
 )
 
 let failed = 0
@@ -45,22 +48,15 @@ function render(element) {
 const store = createStructuredInputStore()
 const instance = store.create('session-test')
 const draftWrites = []
-const inputActions = {
-  setDraft: (text) => { draftWrites.push(text) },
-  submit: () => {},
-  addAttachments: () => true,
-  removeAttachment: () => {},
-  pruneAttachments: () => {},
-}
+const setDraft = (text) => { draftWrites.push(text) }
 
-/** 把 store 实例包装成组件需要的 useStore/actions 座位。 */
+/** 把 store 实例包装成组件需要的 useStore/actions/setDraft 座位。 */
 function propsFor(extra = {}) {
   return {
     useStore: selector => selector(instance.getSnapshot()),
     actions: instance.actions,
+    setDraft,
     sessionId: 'session-test',
-    inputActions,
-    t: key => key,
     ...extra,
   }
 }
@@ -68,24 +64,18 @@ function propsFor(extra = {}) {
 const trigger = extra => render(createElement(StructuredInputTrigger, propsFor(extra)))
 const panel = extra => render(createElement(StructuredInputPanel, propsFor(extra)))
 
-/** 先关再开，避免上一条断言的状态影响下一次渲染。 */
-function renderOpenPanel(extra = {}) {
-  instance.actions.open()
-  return panel(extra)
-}
-
-// ---- 1) 入口按钮（输入框底部工具栏） ----
+// ---- 1) 入口按钮（输入框底部工具栏）----
 
 instance.actions.close()
 const triggerOff = trigger()
 check('入口按钮可渲染', triggerOff.error === null, triggerOff.error === null ? '' : String(triggerOff.error))
 check('入口文案为「结构化输入任务」', triggerOff.html.includes('结构化输入任务'))
-check('未开启时 aria-expanded 为 false', triggerOff.html.includes('aria-expanded="false"'))
+check('未打开时 aria-expanded 为 false', triggerOff.html.includes('aria-expanded="false"'))
 check('入口以 dialog 弹出（aria-haspopup）', triggerOff.html.includes('aria-haspopup="dialog"'))
 
 instance.actions.open()
 const triggerOn = trigger()
-check('开启时入口高亮（aria-expanded 为 true）', triggerOn.html.includes('aria-expanded="true"'))
+check('打开时入口高亮（aria-expanded 为 true）', triggerOn.html.includes('aria-expanded="true"'))
 
 instance.actions.close()
 const triggerDisabled = trigger({ sessionId: undefined })
@@ -95,23 +85,22 @@ check('没有会话时入口禁用', triggerDisabled.html.includes('disabled'))
 
 instance.actions.close()
 const closedPanel = panel()
-check('未开启时弹窗不占用空间', closedPanel.error === null && closedPanel.html === '',
+check('未打开时弹窗不占用空间', closedPanel.error === null && closedPanel.html === '',
   closedPanel.error === null ? closedPanel.html : String(closedPanel.error))
 
 instance.actions.open()
 const modal = panel()
-check('开启时弹窗可渲染', modal.error === null, modal.error === null ? '' : String(modal.error))
+check('打开时弹窗可渲染', modal.error === null, modal.error === null ? '' : String(modal.error))
 check('弹窗以 dialog 呈现', modal.html.includes('role="dialog"') && modal.html.includes('aria-modal="true"'))
 check('弹窗宽度固定（clamp）', modal.html.includes('width:clamp('))
 check('弹窗最多占 70%（不占满窗口）', modal.html.includes('max-height:70vh'))
+
 // 只检查弹窗根元素自身的样式：内部按钮有固定 height 是正常的。
 const modalRootStyle = (/data-structured-prompt-modal=""[^>]*style="([^"]*)"/.exec(modal.html) ?? [])[1] ?? ''
 check('弹窗根元素没有固定高度（由内容决定）', !/(?:^|[;"\s])height:/.test(modalRootStyle), modalRootStyle)
 // `max-width:100%` 是宽度约束（合理）；这里只关心高度不取视口高。
-check('弹窗高度上限不是视口高（不会占满）',
+check('弹窗高度上限不是视口高（不会占满））',
   !/(?:max-|min-)?height:[^;"]*100vh/.test(modalRootStyle), modalRootStyle)
-check('弹窗内容区可滚动', modal.html.includes('overflow-y:auto'))
-check('弹窗有遮罩层', modal.html.includes('position:fixed') && modal.html.includes('inset:0'))
 
 // 回归防线：点遮罩不应关闭弹窗（误触会丢失已填内容）。遮罩上不能有点击处理器。
 const maskTag = (/<div[^>]*style="[^"]*position:fixed[^"]*"[^>]*>/.exec(modal.html) ?? [])[0] ?? ''
@@ -120,7 +109,7 @@ check('遮罩没有绑定点击关闭', maskTag !== '' && !/onclick/i.test(maskT
 
 // 关闭入口：标题栏的 × 与底部的「返回输入框」都要在。
 check('标题栏提供关闭按钮',
-  modal.html.includes('data-structured-prompt-close') && modal.html.includes('aria-label="关闭"'))
+  modal.html.includes('aria-label="关闭"') && modal.html.includes('关闭（不改动输入框内容）'))
 check('底部仍保留返回输入框', modal.html.includes('返回输入框'))
 
 // ---- 3) 默认折叠：只有基础信息展开 ----
@@ -136,17 +125,17 @@ check('折叠组标记为收起', (modal.html.match(/aria-expanded="false"/g) ??
 instance.actions.toggleSection('tools')
 const toolsOpen = panel()
 check('展开工具策略后可见其字段', toolsOpen.html.includes('调用工具策略'))
-check('展开工具策略后其它两组仍折叠', !toolsOpen.html.includes('硬样本示例') && !toolsOpen.html.includes('少样本示例'))
+check('展开工具策略后其它两组仍折叠', !toolsOpen.html.includes('少样本示例'))
 instance.actions.toggleSection('tools')
 
-// ---- 4) 文本域自适应高度（不再限行）+ 任何层级都不裁剪内容 ----
+// ---- 4) 文本域自适应高度 + 布局不变量 ----
 
 check('文本域不写死 rows', !/\brows="/.test(toolsOpen.html) && !/\brows="/.test(modal.html))
 check('文本域带自适应高度约束（min/max-height）',
   modal.html.includes('min-height') && modal.html.includes('max-height'))
 
-// 回归防线：分组曾被卡片包裹，overflow:hidden 把"背景与上下文""语言与语气"等
-// 字段裁掉，导致内容看起来被隐藏、也轮不到滚动条。分组必须不裁剪、不限高。
+// 分组曾被卡片包裹，overflow:hidden 把"背景与上下文""语言与语气"等字段裁掉，导致
+// 内容看起来被隐藏、也轮不到滚动条。分组必须不裁剪、不限高、不用卡片。
 check('分组容器不裁剪内容（无 overflow:hidden）',
   sectionStyle.overflow === undefined && sectionStyle.overflowY === undefined,
   JSON.stringify(sectionStyle))
@@ -154,22 +143,20 @@ check('分组容器不限制高度（无 maxHeight/height）',
   sectionStyle.maxHeight === undefined && sectionStyle.height === undefined)
 check('分组不用卡片包裹（无边框与圆角）',
   sectionStyle.border === undefined && sectionStyle.borderRadius === undefined)
-// 回归防线：分组上写 `min-height: 0` 会把分组压到内容高度以下，子元素互相压叠
+// 分组上写 `min-height: 0` 会把分组压到内容高度以下，子元素互相压叠
 // （症状是分组标题与上一个字段的输入框重叠）。该属性只属于滚动容器。
 check('分组容器不被压缩（不写 minHeight:0）', sectionStyle.minHeight === undefined,
   `minHeight = ${String(sectionStyle.minHeight)}`)
 
-// 回归防线：滚动条挂在弹窗内容区，且它必须能在弹窗内收缩（flex + minHeight:0），
-// 否则溢出内容会被弹窗的 overflow:hidden 裁掉。
+// 滚动条挂在弹窗内容区，且它必须能在弹窗内收缩（flex + minHeight:0），否则溢出
+// 内容会被弹窗的 overflow:hidden 裁掉。
 check('弹窗内容区是滚动容器（overflow-y:auto）', modalBodyStyle.overflowY === 'auto')
 check('弹窗内容区宽度方向不滚动（避免横向滚动条）', modalBodyStyle.overflowX === 'hidden')
 check('弹窗内容区可在弹窗内收缩（flex + minHeight:0）',
   modalBodyStyle.flex === '1 1 auto' && modalBodyStyle.minHeight === 0)
 check('弹窗内容区预留滚动条槽位（内容增减不跳动）',
   modalBodyStyle.scrollbarGutter === 'stable')
-check('滚动容器挂到了弹窗内容区',
-  /data-scroll=""[^>]*style="[^"]*overflow-y:auto/.test(modal.html)
-  || modal.html.includes('data-scroll=""'))
+check('滚动容器挂到了弹窗内容区', modal.html.includes('data-scroll=""'))
 
 // ---- 5) 工具策略：自动（模型判断）/ 手动（用户点名工具）----
 
@@ -183,22 +170,28 @@ const manualEmpty = panel()
 check('手动策略渲染工具点名入口', manualEmpty.html.includes('可调用的工具（工具名 + 用途）'))
 check('手动策略提示尚未点名工具', manualEmpty.html.includes('尚未点名任何工具'))
 check('手动策略提供添加按钮', manualEmpty.html.includes('+ 添加一个工具'))
-// 回归防线：不再从"已安装清单"里勾选（DSH 插件清单列的是自带插件，skills 也不
-// 属于本插件职责；工具检索在输入框的 / 菜单里）。
+// 不再从"已安装清单"里勾选（DSH 插件清单列的是自带插件，skills 也不属于本插件
+// 职责；工具检索在输入框的 / 菜单里）。
 check('手动策略不再渲染清单选择器',
   !manualEmpty.html.includes('选择 skills') && !manualEmpty.html.includes('选择插件'))
 check('手动策略不再出现清单读取状态',
   !manualEmpty.html.includes('读取中') && !manualEmpty.html.includes('读取失败'))
 
 // 填一个工具后应渲染出配对的两个输入框
-instance.actions.addItem('callableTools', 'query_metrics')
-instance.actions.addItem('toolSlots', '拉取指标')
+instance.actions.addTool()
+instance.actions.setItem('callableTools', 0, 'query_metrics')
+instance.actions.setItem('toolSlots', 0, '拉取指标')
 const manualFilled = panel()
 check('点名工具后渲染工具名输入框', manualFilled.html.includes('aria-label="第 1 个工具名"'))
 check('点名工具后渲染用途输入框', manualFilled.html.includes('aria-label="第 1 个工具的用途"'))
 check('工具名写入表单值', manualFilled.html.includes('value="query_metrics"'))
 check('用途写入表单值', manualFilled.html.includes('value="拉取指标"'))
-instance.actions.setField('toolPolicy', '')
+check('工具名与用途数组长度一致',
+  instance.getSnapshot().form.callableTools.length === instance.getSnapshot().form.toolSlots.length)
+instance.actions.removeTool(0)
+check('删除工具后两个数组同步清空',
+  instance.getSnapshot().form.callableTools.length === 0
+  && instance.getSnapshot().form.toolSlots.length === 0)
 instance.actions.setField('toolPolicy', '')
 
 // ---- 6) 开关来回切换不触发 hook 规则错误 ----
@@ -220,22 +213,24 @@ check('开关来回切换不触发 React hook 规则错误', toggleError === nul
 // ---- 7) 填写后预览与返回入口 ----
 
 instance.actions.open()
-instance.actions.setForm({ ...instance.getSnapshot().form, role: '身份示例', goal: '目标示例' })
+instance.actions.setField('role', '身份示例')
+instance.actions.setField('goal', '目标示例')
 const filled = panel()
 check('填写必填后不再提示缺失', !filled.html.includes('还差必填'))
 check('预览区出现已构建提示词', filled.html.includes('# 身份') && filled.html.includes('身份示例'))
 check('返回入口存在', filled.html.includes('返回输入框'))
-// 回归防线：操作类按钮（模板/导入/导出/清空/返回）应集中在底部操作栏，
-// 不能出现在顶部标题栏。用「标题之后到第一个分组之前」这段 HTML 检查。
+
+// 操作类按钮集中在底部操作栏，不出现在顶部标题栏。
 const headHtml = filled.html.slice(
   filled.html.indexOf('结构化输入任务'),
   filled.html.indexOf('aria-label="身份"'),
 )
-check('标题栏只保留标题与必填提示（不含操作按钮）',
+check('标题栏只保留标题与关闭（不含操作按钮）',
   !headHtml.includes('>导出<') && !headHtml.includes('>清空<') && !headHtml.includes('返回输入框'),
-  headHtml.slice(0, 200))
+  headHtml.slice(0, 160))
 check('底部操作栏含全部操作控件',
   ['模板…', '>导入<', '>导出<', '>清空<', '返回输入框'].every(label => filled.html.includes(label)))
+
 check('18 项字段齐备（展开全部后抽样）', (() => {
   for (const id of ['rules', 'tools', 'output']) {
     if (instance.getSnapshot().collapsed.includes(id)) instance.actions.toggleSection(id)

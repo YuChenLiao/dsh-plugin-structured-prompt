@@ -20,12 +20,13 @@ const HARNESS_ROOT = process.env.DSH_SOURCE_ROOT ?? 'D:\\dsh\\deepseek-harness'
 /**
  * 定位某个包在源码树中的安装目录。
  * @param name - 包名。
+ * @param extraBases - 额外的解析基准（相对源码树），用于只在子包内安装的包。
  * @returns 该包的绝对路径。
  * @throws {Error} 当源码树里找不到它时。
  */
-function locate(name) {
+function locate(name, extraBases = []) {
   // 从每个可能装了该包的 client 子包位置解析；pnpm 会把它们链接到 store。
-  const candidates = []
+  const candidates = extraBases.map(relative => join(HARNESS_ROOT, relative))
   const clients = join(HARNESS_ROOT, 'packages', 'client')
   if (existsSync(clients)) {
     for (const entry of readdirSync(clients)) candidates.push(join(clients, entry))
@@ -48,23 +49,39 @@ function locate(name) {
 const target = join(PLUGIN_ROOT, 'node_modules')
 mkdirSync(target, { recursive: true })
 
-for (const name of ['react', 'react-dom']) {
-  const source = locate(name)
-  const link = join(target, name)
-  if (existsSync(link) || lstatSync(link, { throwIfNoEntry: false }) !== undefined) {
+/**
+ * 建立（或修复）一个指向源码树安装位置的链接。
+ * @param name - 包名；含 `/` 时会创建中间目录。
+ * @param source - 目标绝对路径。
+ */
+function link(name, source) {
+  const dest = join(target, name)
+  const existing = lstatSync(dest, { throwIfNoEntry: false })
+  if (existing !== undefined) {
     let same = false
     try {
-      same = resolve(link) === resolve(source)
+      same = resolve(dest) === resolve(source)
     } catch {
       same = false
     }
     if (same) {
       console.log(`OK    已就绪 ${name} -> ${source}`)
-      continue
+      return
     }
-    rmSync(link, { recursive: true, force: true })
+    rmSync(dest, { recursive: true, force: true })
   }
-  symlinkSync(source, link, 'junction')
+  mkdirSync(dirname(dest), { recursive: true })
+  symlinkSync(source, dest, 'junction')
   console.log(`OK    建立链接 ${name} -> ${source}`)
 }
+
+// react / react-dom：运行时由模块表提供，这里只是让离线测试能解析到同一实例。
+for (const name of ['react', 'react-dom']) {
+  link(name, locate(name))
+}
+
+// @types/react：类型检查用。与运行时 react 同版本，避免 JSX 类型漂移。
+const reactTypes = locate('@types/react', [join('packages', 'client', 'ui-primitives')])
+link('@types/react', reactTypes)
+
 console.log('开发态链接准备完成。')

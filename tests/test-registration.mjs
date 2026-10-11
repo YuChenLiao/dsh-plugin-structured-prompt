@@ -2,23 +2,17 @@
  * 插件注册契约测试（不需要 DSH 运行时）。
  *
  * 为什么需要它：渲染测试直接给组件喂 `useStore`，因此**绕过了框架的注入**。
- * 而 `useStore`/`actions` 并不是标准 props —— 渲染器只在注册声明了 `store`
- * 座位时才注入它们。漏声明会让组件拿到 `undefined`、渲染时抛错、条目被隔离
- * 失效（表现为"按钮消失"）。这条契约只能本文件这样在注册层校验。
+ * 而 `useStore`/`actions` 并不是标准 props —— 渲染器只在注册声明了 `store` 座位
+ * 时才注入它们。漏声明会让组件拿到 `undefined`、渲染时抛错、条目被隔离失效
+ * （表现为"按钮消失"）。这条契约只能本文件这样在注册层校验。
  *
- * 覆盖：
- *  1. `apply()` 能在不抛错的情况下完成全部注册（含样式注入 effect）；
- *  2. 每个注册都声明了 store，且指向同一个句柄（实例才会共享）；
- *  3. 注册表与预期槽位/组件一一对应；
- *  4. 依赖面保持最小：只声明 `slots`（本插件不读主机数据，见 index.js 说明）。
- *
- * 用法：node --import ./tools/lib/loader-hook.mjs tools/test-registration.mjs
+ * 用法：node --import ./tools/lib/loader-hook.mjs tests/test-registration.mjs
  */
 import { pathToFileURL } from 'node:url'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const SRC = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'client')
+const CLIENT = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'client')
 
 let failed = 0
 const check = (label, ok, detail = '') => {
@@ -66,7 +60,7 @@ function installDocumentStub() {
 }
 
 installDocumentStub()
-const mod = await import(pathToFileURL(resolve(SRC, 'index.js')).href)
+const mod = await import(pathToFileURL(resolve(CLIENT, 'index.ts')).href)
 
 // ---- 1) apply() 全程不抛错 ----
 
@@ -105,13 +99,12 @@ check('入口与弹窗使用同一个 id（各自槽位内唯一）',
 
 // ---- 4) 依赖面最小化 ----
 
-// 本插件不读主机数据（工具名由用户手填），因此不应该再依赖 remote。一旦有人
-// 把 remote 加回来，这里会提醒：那意味着又引入了 RPC 依赖。
-check('inject 只声明 slots', mod.inject.length === 1 && mod.inject[0] === 'slots',
-  mod.inject.join(', '))
+// 本插件不读主机数据（工具名由用户手填），因此不应该再依赖 remote。一旦有人把
+// remote 加回来，这里会提醒：那意味着又引入了 RPC 依赖。
+check('inject 只声明 slots',
+  mod.inject.length === 1 && mod.inject[0] === 'slots', mod.inject.join(', '))
 check('inject 不依赖 remote（本插件不读主机数据）',
-  !mod.inject.some(name => name === 'remote' || name.startsWith('remote.')),
-  mod.inject.join(', '))
+  !mod.inject.some(name => name === 'remote' || name.startsWith('remote.')), mod.inject.join(', '))
 
 if (failed > 0) {
   console.error(`\n${failed} 项注册契约测试未通过。`)

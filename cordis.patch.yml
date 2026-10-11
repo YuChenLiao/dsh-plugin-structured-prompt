@@ -4,9 +4,13 @@
 # 这是插件的"挂载声明"。DSH 启动时按 bundle 层栈叠加各插件 patch，
 # 本文件把结构化输入任务插件插入 profile 的配置树。
 #
-# 安装方式：
-#   dsh plugin --profile desktop add link:D:\dsh\dsh-plugin-structured-prompt
-# 或在 profile 的 package.json 中声明依赖后由 patch 层挂载。
+# 安装方式（从 GitHub）：
+#   dsh plugin --profile desktop add github:YuChenLiao/dsh-plugin-structured-prompt
+#
+# 本地开发安装：
+#   dsh plugin --profile desktop add link:<本目录绝对路径>
+#
+# 两种方式都会同时登记依赖、bundle 与 Loader 行；装完需要重启 DSH。
 # ============================================================================
 
 - insert:

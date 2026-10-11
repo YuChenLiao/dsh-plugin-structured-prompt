@@ -4,12 +4,19 @@
 
 在输入框底部的「结构化输入任务」，点开即弹出结构化提示词表单。填完后可以一键把构建好的提示词同步回输入框，再照常编辑、发送。
 
+```powershell
+dsh plugin --profile desktop add github:YuChenLiao/dsh-plugin-structured-prompt
+# 重启 DSH 生效（客户端插件的模块图在启动时建立）
+```
+
+仓库已包含构建好的 `lib/`，装完即可用；想改源码看下方[开发](#开发)。
+
 ## 功能
 
 - **输入框底部入口**：入口按钮在输入框工具栏里（`conversation.input.left`，与计划/权限控件同一行），点开弹出表单。
 - **弹窗表单**：宽度固定（`clamp(600px, 74vw, 900px)`），高度**由内容决定、最多占窗口 70%**（`max-height: 70vh`）——不会占满屏幕；内容超出上限时在弹窗**右侧**出现滚动条（内容区需要 `overflow-y: auto` + `flex: 1 1 auto` + `min-height: 0` 才能正确收缩，`scrollbar-gutter: stable` 避免内容增减时左右跳动）。
 - **弹窗分三段**：标题栏（标题 + 必填提示）/ 可滚动内容区（四个分组）/ **底部操作栏**（模板、导入、导出、清空在左，返回在右）。滚轮只作用于内容区，标题栏与底部操作栏常驻。
-- **点遮罩不关闭**：遮罩不绑定点击处理器，避免误触丢失已填内容；关闭只经由底部「返回输入框」或 Esc（Esc 会先收起正在展开的候选选择器）。
+- **点遮罩不关闭**：遮罩不绑定点击处理器，避免误触丢失已填内容；关闭只经由标题栏的 `×`、底部「返回输入框」或 Esc。
 - **分组不裁剪内容**：分组只用「标题 + 分隔线」，**不用卡片包裹**。卡片带来 `overflow: hidden`，会把需要更多高度的字段裁掉、也截断外层滚动——这正是"表单项展示不全"的根因。任何层级都不设 `max-height` 去限制字段。
 - **`min-height: 0` 只属于滚动容器**：分组容器**不写** `min-height`，保留默认的 `min-height: auto` 让它按内容撑高；若误写在分组上，分组会被压缩到内容高度以下、子元素互相压叠（症状是分组标题与上一个字段的输入框重叠）。这条与上一条一样由渲染测试直接断言。
 - **表单字段不限高**：多行文本域不写死行数，高度随内容自适应（`field-sizing: content`，不支持的浏览器由 `onInput` 兜底）。
@@ -59,39 +66,109 @@
 
 ## 安装
 
+### 从 GitHub 安装（推荐）
+
 ```powershell
-dsh plugin --profile desktop add link:D:\dsh\dsh-plugin-structured-prompt
+dsh plugin --profile desktop add github:YuChenLiao/dsh-plugin-structured-prompt
 ```
 
-插件通过 `dsh.bundle.patch` 挂载；`dsh plugin add` 会同时登记依赖、bundle 与 Loader 行。**安装后需要重启 DSH**（客户端插件的模块图在启动时建立）。
+`dsh plugin add` 会同时登记依赖、bundle 与 Loader 行。仓库里已包含构建好的 `lib/`，因此**装完重启 DSH 即可**，不需要自己构建。
+
+### 本地开发安装
+
+```powershell
+git clone https://github.com/YuChenLiao/dsh-plugin-structured-prompt.git
+cd dsh-plugin-structured-prompt
+dsh plugin --profile desktop add link:$PWD
+```
+
+链接方式下源码改动需要重新构建产物才生效（见下方「开发」）。
+
+无论哪种方式，插件都通过 `dsh.bundle.patch` 挂载，**安装后需要重启 DSH**（客户端插件的模块图在启动时建立）。
 
 ## 开发
 
+源码是 TypeScript（`.ts` / `.tsx`），构建与类型检查都复用 **DSH 源码树**里已安装的
+工具（tsdown / typescript / tsx / react 类型）—— 本插件自身**没有 devDependency**，
+也不执行 `npm install`。因此需要先把 DSH 源码仓库放在手边：
+
 ```powershell
-# 1) 准备离线测试用的 React 链接（幂等，只需一次）
+git clone https://github.com/deepseek-ai/deepseek-harness.git
+$env:DSH_SOURCE_ROOT = "<上一步克隆出来的目录>"   # 默认按 D:\dsh\deepseek-harness 查找
+```
+
+然后：
+
+```powershell
+# 1) 准备离线运行需要的链接（幂等，只需一次）
+#    react / react-dom（测试与组件必须是同一实例）+ @types/react（类型检查）
 node tools/setup-dev-links.mjs
 
 # 2) 构建产物 lib/index.js（host）与 lib/client.js（浏览器）
 node tools/lib/build.mjs
 
-# 3) 四套验证
-node --import ./tools/lib/loader-hook.mjs tools/test-registration.mjs  # 注册契约（槽位/store 座位）
-node --import ./tools/lib/loader-hook.mjs tools/test-render.mjs        # 渲染与交互结构
-node tools/test-prompt.mjs                                             # 提示词构建行为
-node tools/verify-install.mjs                                          # 安装与产物契约
+# 3) 全部验证：类型检查 + 提示词行为 + 注册契约 + 渲染结构 + 安装产物
+node tools/run-tests.mjs
 ```
 
-构建复用 DSH 源码树中已安装的 tsdown（默认 `D:\dsh\deepseek-harness`，可用 `DSH_SOURCE_ROOT` 覆盖），本插件自身没有 devDependency。
+单跑某一套（`tsx` 提供 TS/TSX 转译，`TSX_TSCONFIG_PATH` 让 `jsx: react-jsx` 生效，
+`loader-hook` 负责依赖桩与 `.js`→`.ts` 说明符映射）：
+
+```powershell
+$env:TSX_TSCONFIG_PATH = "$PWD\tsconfig.json"
+node --import file:///D:/dsh/deepseek-harness/node_modules/tsx/dist/loader.mjs `
+     --import ./tools/lib/loader-hook.mjs tests/test-render.mjs
+```
+
+### 代码结构
+
+单文件不超过 **260 行**（由 `tests/verify-install.mjs` 断言），入口只做装配：
+
+```text
+src/index.js                   host 半边（空 apply，无模型可见输入）
+src/client/
+  index.ts                     插件主体：槽位注册 + 样式注入（无 UI 实现）
+  types.ts                     共享类型（表单、状态、分组元数据）
+  forms.ts                     空白表单与片段补全
+  store.ts                     会话状态（defineStore 动作表）
+  prompt.ts                    提示词构建核心（纯函数，段落顺序是契约）
+  templates.ts                 内置模板库（填字段，不填成稿）
+  dsh-client-store.d.ts        DSH store 的本地类型声明（不引入其包）
+  ui/
+    theme.ts                   颜色 token 与文本域尺寸
+    styles.ts                  样式对象 + 三条布局不变量 + PANEL_CSS
+    config.ts                  分组与逐条字段的元数据
+    actions.ts                 组件侧的动作类型（打断循环引用）
+    base.tsx                   TextArea / TextInput / Field / SmallButton / ChipGroup
+    ListEditor.tsx             逐条增删改序
+    ToolPairEditor.tsx         工具名 ↔ 用途配对编辑
+    CollapsibleSection.tsx     可折叠分组容器
+    ReturnPromptBar.tsx        返回二选一
+    Preview.tsx                提示词预览
+    ModalFooter.tsx            底部操作栏
+    Modal.tsx                  弹窗三段结构
+    Panel.tsx                  conversation.input.dock 占用者（按开关渲染弹窗）
+    Trigger.tsx                input.left 占用者（入口按钮）
+    sections/                  四个分组各自的字段
+      BasicSection.tsx  RulesSection.tsx  ToolsSection.tsx  OutputSection.tsx
+tools/
+  lib/build.mjs                构建脚本（tsdown）
+  lib/loader-hook.mjs          测试用依赖桩 + 说明符映射
+  lib/store-stub.mjs           defineStore 的离线实现
+  setup-dev-links.mjs          开发态链接
+  run-tests.mjs                五套验证的统一入口
+tests/                         test-prompt / test-registration / test-render / verify-install
+```
 
 ### 槽位注册契约（注册测试守住的那条线）
 
 `useStore` / `actions` **不是**槽位标准 props。渲染器只在注册声明了 `store` 座位时才注入它们：
 
-```js
+```ts
 ctx.slots.register({ name, id, order, store }, Component)   // 组件里才有 props.useStore / props.actions
 ```
 
-漏声明 `store` → 组件拿到 `undefined` → 渲染时抛错 → 条目被隔离失效（表现就是"按钮不见了"，且槽位检查里该条目 `active: false`）。这条契约渲染测试抓不到（渲染测试直接给组件喂 `useStore`），因此单独由 `tools/test-registration.mjs` 在注册层断言：**每个注册都必须声明 `store`，且两者共用同一个句柄**。
+漏声明 `store` → 组件拿到 `undefined` → 渲染时抛错 → 条目被隔离失效（表现就是"按钮不见了"，且槽位检查里该条目 `active: false`）。这条契约渲染测试抓不到（渲染测试直接给组件喂 `useStore`），因此单独由 `tests/test-registration.mjs` 在注册层断言：**每个注册都必须声明 `store`，且两者共用同一个句柄**。
 
 ### 产物契约
 
@@ -106,24 +183,24 @@ window.__ModuleLoader__.load({ id: 'dsh-plugin-structured-prompt', factory: requ
 
 ## 架构
 
-```text
-src/index.js              host 半边（空 apply）
-src/client/index.js       槽位注册（input.left 入口 + input.dock 弹窗）
-src/client/store.js       会话级状态（defineStore）
-src/client/prompt.js      提示词构建核心（纯函数）+ 模板库
-src/client/Form.js        入口按钮与表单弹窗 UI
-tools/lib/build.mjs       构建脚本
-tools/test-*.mjs          验证脚本
-```
-
 两个槽位注册，**都声明同一个 `store` 句柄**：
 
 | 槽位 | 组件 | 职责 |
 | --- | --- | --- |
-| `conversation.input.left`（list） | `StructuredInputTrigger` | 输入框底部工具栏里的入口按钮 |
-| `conversation.input.dock`（list） | `StructuredInputPanel` | 开启时渲染表单弹窗，关闭时不占空间 |
+| `conversation.input.left`（list） | `ui/Trigger.tsx` | 输入框底部工具栏里的入口按钮 |
+| `conversation.input.dock`（list） | `ui/Panel.tsx` | 打开时渲染表单弹窗，关闭时不占空间 |
 
 两处 `store` 座位不可省略（见上文[槽位注册契约](#槽位注册契约注册测试守住的那条线)），否则组件拿不到 `useStore` 会直接崩溃失效。声明后渲染器按「handle × sessionId」共享同一实例，所以入口的 `open()` 会直接驱动弹窗组件重渲染——不需要任何跨注册的状态同步。
+
+模块划分见上文[代码结构](#代码结构)；数据流是单向的：
+
+```text
+store.ts (状态) ──► ui/Panel.tsx ──► ui/Modal.tsx ──► ui/sections/* ──► ui/base.tsx
+                        │                  │
+                        │                  └──► ui/ModalFooter.tsx（模板 / 导入导出 / 返回）
+                        └──► ui/Trigger.tsx（同一 store 的另一处只读/写）
+prompt.ts (纯函数) ◄── PromptForm ── ui/OutputSection.tsx（选格式时填骨架）
+```
 
 ### 为什么不用另外两个候选挂载点
 
