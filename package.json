@@ -1,0 +1,43 @@
+{
+  "name": "dsh-plugin-structured-prompt",
+  "version": "0.1.0",
+  "private": true,
+  "description": "DSH 结构化输入任务插件：把输入框切换为结构化提示词表单（身份/目标/硬性规则/工具策略/输出格式/兜底/示例），支持工具策略自动或手动、skills 与插件清单自动同步、返回输入框模式并可同步已构建提示词",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": {
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "default": "./lib/client.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-renderer",
+        "@deepseek-ai/dsh-client-ui-primitives"
+      ]
+    }
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "prompt-engineering",
+    "structured-input"
+  ],
+  "license": "MIT"
+}
