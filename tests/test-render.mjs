@@ -47,15 +47,16 @@ function render(element) {
 
 const store = createStructuredInputStore()
 const instance = store.create('session-test')
-const draftWrites = []
-const setDraft = (text) => { draftWrites.push(text) }
+/** 已发送的成稿（面板把宿主的 onSend 透传给弹窗）。 */
+const sent = []
+const onSend = (text) => { sent.push(text) }
 
-/** 把 store 实例包装成组件需要的 useStore/actions/setDraft 座位。 */
+/** 把 store 实例包装成组件需要的 useStore/actions/onSend 座位。 */
 function propsFor(extra = {}) {
   return {
     useStore: selector => selector(instance.getSnapshot()),
     actions: instance.actions,
-    setDraft,
+    onSend,
     sessionId: 'session-test',
     ...extra,
   }
@@ -107,10 +108,7 @@ const maskTag = (/<div[^>]*style="[^"]*position:fixed[^"]*"[^>]*>/.exec(modal.ht
 check('遮罩是弹窗的第一层容器', maskTag !== '', maskTag.slice(0, 120))
 check('遮罩没有绑定点击关闭', maskTag !== '' && !/onclick/i.test(maskTag), maskTag.slice(0, 200))
 
-// 关闭入口：标题栏的 × 与底部的「返回输入框」都要在。
-check('标题栏提供关闭按钮',
-  modal.html.includes('aria-label="关闭"') && modal.html.includes('关闭（不改动输入框内容）'))
-check('底部仍保留返回输入框', modal.html.includes('返回输入框'))
+check('标题栏提供关闭按钮', modal.html.includes('aria-label="关闭"'))
 
 // ---- 3) 默认折叠：只有基础信息展开 ----
 
@@ -218,7 +216,14 @@ instance.actions.setField('goal', '目标示例')
 const filled = panel()
 check('填写必填后不再提示缺失', !filled.html.includes('还差必填'))
 check('预览区出现已构建提示词', filled.html.includes('# 身份') && filled.html.includes('身份示例'))
-check('返回入口存在', filled.html.includes('返回输入框'))
+check('底部提供复制按钮', filled.html.includes('>复制<'))
+check('底部提供发送按钮', filled.html.includes('>发送<'))
+
+// 回归防线：返回/同步相关 UI 已整体删除 —— 它既没有存在必要，实测还会卡住。
+check('不再出现返回/同步入口',
+  !filled.html.includes('返回输入框')
+  && !filled.html.includes('同步并返回')
+  && !filled.html.includes('不同步，直接返回'))
 
 // 操作类按钮集中在底部操作栏，不出现在顶部标题栏。
 const headHtml = filled.html.slice(
@@ -226,10 +231,38 @@ const headHtml = filled.html.slice(
   filled.html.indexOf('aria-label="身份"'),
 )
 check('标题栏只保留标题与关闭（不含操作按钮）',
-  !headHtml.includes('>导出<') && !headHtml.includes('>清空<') && !headHtml.includes('返回输入框'),
+  !headHtml.includes('>导出<') && !headHtml.includes('>清空<') && !headHtml.includes('>发送<'),
   headHtml.slice(0, 160))
 check('底部操作栏含全部操作控件',
-  ['模板…', '>导入<', '>导出<', '>清空<', '返回输入框'].every(label => filled.html.includes(label)))
+  ['模板…', '>导入<', '>导出<', '>清空<', '>复制<', '>发送<'].every(label => filled.html.includes(label)))
+
+// 发送：把成稿交给宿主（此处是测试记录的 onSend），并由弹窗自行关闭。
+// SSR 无法点击，因此断言按钮可点（未勾选必填时禁用）与成稿就绪。
+check('成稿就绪时发送按钮可用', /title="把提示词投递进当前会话"/.test(filled.html))
+instance.actions.setField('role', '')
+const missingRequired = panel()
+check('必填未填时发送按钮禁用', missingRequired.html.includes('title="身份与目标为必填"'))
+instance.actions.setField('role', '身份示例')
+
+// 剪贴板降级：Node 里没有 navigator.clipboard，应走 execCommand 路径而不是抛错。
+const { copyText } = await import(pathToFileURL(resolve(CLIENT, 'ui', 'clipboard.ts')).href)
+check('空文本不写剪贴板', (await copyText('')) === false)
+const copied = []
+const originalDoc = globalThis.document
+globalThis.document = {
+  body: { appendChild() {} },
+  createElement: () => ({
+    style: {},
+    setAttribute() {},
+    select() { copied.push('selected') },
+    remove() {},
+  }),
+  execCommand: (cmd) => cmd === 'copy',
+}
+const fallbackOk = await copyText('成稿正文')
+globalThis.document = originalDoc
+check('navigator.clipboard 缺失时降级到 execCommand', fallbackOk === true && copied.length === 1,
+  `ok=${String(fallbackOk)} selected=${copied.length}`)
 
 check('18 项字段齐备（展开全部后抽样）', (() => {
   for (const id of ['rules', 'tools', 'output']) {

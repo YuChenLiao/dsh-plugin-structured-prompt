@@ -25,7 +25,19 @@ function makeCtx() {
   const registrations = []
   const injected = []
   const effects = []
+  const sent = []
+  // 会话作用域上下文：真实类型是 AgentContext，发送走它的 get('conversation')。
+  const conversation = {
+    send: async (text) => { sent.push(text) },
+  }
+  const scoped = {
+    get: (name) => (name === 'conversation' ? conversation : undefined),
+  }
   const ctx = {
+    get: (name) => {
+      if (name === 'sessions') return { scope: (id) => (id === 'session-abc' ? scoped : undefined) }
+      return undefined
+    },
     effect: (factory, label) => {
       effects.push(label)
       const disposer = factory()
@@ -42,7 +54,7 @@ function makeCtx() {
       },
     },
   }
-  return { ctx, registrations, injected, effects }
+  return { ctx, registrations, injected, effects, sent }
 }
 
 /** 最小 document 桩：apply 会注入一个样式标签。 */
@@ -96,6 +108,28 @@ check('入口与弹窗使用不同组件',
 check('入口与弹窗使用同一个 id（各自槽位内唯一）',
   byName.get('conversation.input.left')?.options.id === 'structured-prompt'
   && byName.get('conversation.input.dock')?.options.id === 'structured-prompt')
+
+// ---- 3b) 发送链路：注入面把成稿投进该会话 ----
+
+const dockInject = byName.get('conversation.input.dock')?.options.inject
+check('弹窗注册带 inject 面（发送能力）', typeof dockInject === 'function')
+const face = dockInject?.('session-abc')
+check('inject 面暴露 onSend', typeof face?.onSend === 'function')
+face?.onSend('成稿正文')
+// conversation.send 是异步的：等一轮微任务后检查投递。
+await Promise.resolve()
+await Promise.resolve()
+check('onSend 把成稿交给会话的 conversation.send', bench.sent[0] === '成稿正文',
+  JSON.stringify(bench.sent))
+// 会话取不到时不应抛错，只记录日志（避免拖垮整个 apply）。
+const missingFace = dockInject?.('session-not-found')
+let sendError = null
+try {
+  missingFace?.onSend('成稿正文')
+} catch (error) {
+  sendError = error
+}
+check('未知会话下发送不抛错', sendError === null, sendError === null ? '' : String(sendError))
 
 // ---- 4) 依赖面最小化 ----
 

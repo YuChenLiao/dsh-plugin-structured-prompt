@@ -26,6 +26,8 @@ import type { StructuredInputStore } from './store.js'
 import { StructuredInputPanel } from './ui/Panel.js'
 import { StructuredInputTrigger } from './ui/Trigger.js'
 import { PANEL_CSS } from './ui/styles.js'
+import type { ClientPluginContext } from './plugin-context.js'
+import { sendPrompt } from './send.js'
 
 /**
  * 插件依赖：只需要槽位注册。
@@ -51,10 +53,17 @@ export interface SlotEntry {
  *
  * 两个注册共享同一个 store 句柄，渲染器按「handle × sessionId」共享实例，因此
  * 入口的 `open()` 会直接驱动弹窗组件重渲染。
+ *
+ * `input.dock` 的注册额外声明 `inject`：把宿主的发送能力包成 `onSend(prompt)` 交给
+ * 弹窗组件 —— 组件因此不必接触 `ctx`，也不必假定输入框此刻是否挂载。
  * @param store - `createStructuredInputStore()` 的句柄。
- * @returns 注册三元组列表。
+ * @param sendPrompt - 把成稿发送进指定会话的宿主回调。
+ * @returns 注册列表。
  */
-export function slotEntries(store: StructuredInputStore): SlotEntry[] {
+export function slotEntries(
+  store: StructuredInputStore,
+  sendPrompt: (sessionId: string, prompt: string) => void,
+): SlotEntry[] {
   return [
     {
       name: 'conversation.input.left',
@@ -63,34 +72,23 @@ export function slotEntries(store: StructuredInputStore): SlotEntry[] {
     },
     {
       name: 'conversation.input.dock',
-      options: { name: 'conversation.input.dock', id: 'structured-prompt', order: 10, store },
+      options: {
+        name: 'conversation.input.dock',
+        id: 'structured-prompt',
+        order: 10,
+        store,
+        // 位置参数由声明推导：会话作用域的注册收到的是 (sessionId)。
+        inject: (sessionId: string) => ({
+          /**
+           * 把成稿发送进当前会话。
+           * @param prompt - 构建好的提示词。
+           */
+          onSend: (prompt: string) => { sendPrompt(sessionId, prompt) },
+        }),
+      },
       component: StructuredInputPanel as SlotEntry['component'],
     },
   ]
-}
-
-/** 本插件用到的 Cordis 上下文（只声明实际消费的部分）。 */
-export interface ClientPluginContext {
-  /**
-   * 注册一个随插件 fiber 释放的副作用。
-   * @param factory - 立即执行并返回清理函数的工厂。
-   * @param label - 诊断标签。
-   */
-  effect(factory: () => void | (() => void), label: string): unknown
-  slots: {
-    /**
-     * 等目标槽位被声明后注册。
-     * @param key - 槽位键。
-     * @param callback - 注册回调。
-     */
-    inject(key: string, callback: () => void): unknown
-    /**
-     * 注册一个槽位条目。
-     * @param options - 注册选项。
-     * @param component - 组件。
-     */
-    register(options: Record<string, unknown>, component: unknown): unknown
-  }
 }
 
 /** 注入的样式标签选择器，避免重复加载时叠加。 */
@@ -122,7 +120,8 @@ function installStyles(ctx: ClientPluginContext): void {
 export function apply(ctx: ClientPluginContext): void {
   const store = createStructuredInputStore()
   installStyles(ctx)
-  for (const entry of slotEntries(store)) {
+  const entries = slotEntries(store, (sessionId, prompt) => { sendPrompt(ctx, sessionId, prompt) })
+  for (const entry of entries) {
     ctx.slots.inject(entry.name, () => ctx.slots.register(entry.options, entry.component))
   }
 }

@@ -1,15 +1,17 @@
 /**
- * 底部操作栏：模板、导入、导出、清空在左，「返回输入框」在右。
+ * 底部操作栏。
  *
- * 放在底部而不是标题栏：这些是低频、收尾类操作，常驻在滚动区之外既不会随内容
- * 滚动跑掉，也不会和标题行抢注意力。
+ * 布局：左侧是表单级工具（模板、导入、导出、清空），右侧是本插件的主要动作
+ * ——「复制」（把成稿放进剪贴板）与「发送」（写入输入框并直接提交）。
+ *
+ * 关闭不在这里：标题栏的 `×` 与 Esc 已经覆盖，底部再放一个只是重复。
  */
 import type { ChangeEvent, ReactNode, RefObject } from 'react'
 import type { PromptForm } from '../types.js'
 import type { FormActions } from './actions.js'
 import { SmallButton } from './base.js'
 import { TEMPLATES } from '../templates.js'
-import { COLORS, buttonStyle, modalFootStyle, rowStyle } from './styles.js'
+import { COLORS, buttonStyle, modalFootStyle, primaryButtonStyle, rowStyle } from './styles.js'
 
 /** 底部操作栏的 props。 */
 export interface ModalFooterProps {
@@ -19,22 +21,27 @@ export interface ModalFooterProps {
   onExport: () => void
   /** 点击导入：交给隐藏的 file input。 */
   onImportClick: () => void
-  /** 隐藏的 file input 引用（点击它与变更都由本组件触发）。 */
-  importRef: RefObject<HTMLInputElement>  /** file input 变更回调。 */
+  /** 隐藏的 file input 引用。 */
+  importRef: RefObject<HTMLInputElement>
+  /** file input 变更回调。 */
   onImportChange: (event: ChangeEvent<HTMLInputElement>) => void
-  /** 是否展开「返回输入框」的二选一。 */
-  returnPrompt: boolean
-  /** 切换二选一区域。 */
-  onToggleReturn: () => void
+  /** 复制成稿到剪贴板。 */
+  onCopy: () => void
+  /** 复制结果提示；未复制过时为 `null`。 */
+  copyState: 'ok' | 'failed' | null
+  /** 把成稿投递进当前会话。 */
+  onSend: () => void
+  /** 成稿是否可用（身份与目标已填）。 */
+  canSend: boolean
 }
 
 /**
  * 底部操作栏。
- * @param props - 动作与回调。
+ * @param props - 动作与状态。
  * @returns 底部栏元素。
  */
 export function ModalFooter({
-  actions, onExport, onImportClick, importRef, onImportChange, returnPrompt, onToggleReturn,
+  actions, onExport, onImportClick, importRef, onImportChange, onCopy, copyState, onSend, canSend,
 }: ModalFooterProps): ReactNode {
   return (
     <div style={modalFootStyle}>
@@ -64,13 +71,37 @@ export function ModalFooter({
         <SmallButton title="导出当前表单为 JSON" onClick={onExport}>导出</SmallButton>
         <SmallButton title="清空全部字段" onClick={() => actions.reset()}>清空</SmallButton>
       </div>
-      <SmallButton
-        title="返回输入框"
-        style={{ borderColor: COLORS.borderStrong }}
-        onClick={onToggleReturn}
-      >
-        {returnPrompt ? '收起返回选项' : '返回输入框'}
-      </SmallButton>
+
+      <div style={{ ...rowStyle, flexWrap: 'wrap' }}>
+        {copyState === null ? null : (
+          <span
+            role="status"
+            style={{ fontSize: 12, color: copyState === 'ok' ? COLORS.textSecondary : COLORS.danger }}
+          >
+            {copyState === 'ok' ? '已复制' : '复制失败'}
+          </span>
+        )}
+        <SmallButton
+          title={canSend ? '复制构建好的提示词到剪贴板' : '身份与目标为必填'}
+          disabled={!canSend}
+          onClick={onCopy}
+        >
+          复制
+        </SmallButton>
+        <button
+          type="button"
+          style={{
+            ...primaryButtonStyle,
+            opacity: canSend ? 1 : 0.5,
+            cursor: canSend ? 'pointer' : 'not-allowed',
+          }}
+          disabled={!canSend}
+          title={canSend ? '把提示词投递进当前会话' : '身份与目标为必填'}
+          onClick={onSend}
+        >
+          发送
+        </button>
+      </div>
     </div>
   )
 }

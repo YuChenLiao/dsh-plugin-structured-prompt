@@ -5,17 +5,20 @@
  *  - 只有内容区滚动：标题栏与底部操作栏 `flex: none` 常驻，滚动条只出现在内容区
  *    右侧；
  *  - 点遮罩**不关闭**：遮罩不绑定点击处理器，避免误触丢掉已填内容；关闭只经由
- *    标题栏的 ×、底部「返回输入框」或 Esc。
+ *    标题栏的 `×` 或 Esc。
+ *
+ * 主要动作是「复制」（成稿进剪贴板）与「发送」（把成稿投递进当前会话）；不提供
+ * 「同步并返回」这类中间态 —— 要么复制走，要么直接发出去。
  */
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ChangeEvent, ReactNode } from 'react'
-import type { PromptForm, StructuredState } from '../types.js'
+import type { PromptForm } from '../types.js'
 import type { FormActions } from './actions.js'
 import { SmallButton } from './base.js'
 import { CollapsibleSection } from './CollapsibleSection.js'
 import { ModalFooter } from './ModalFooter.js'
 import { Preview } from './Preview.js'
-import { ReturnPromptBar } from './ReturnPromptBar.js'
+import { copyText } from './clipboard.js'
 import { SECTIONS } from './config.js'
 import { BasicSection } from './sections/BasicSection.js'
 import { OutputSection } from './sections/OutputSection.js'
@@ -31,6 +34,9 @@ import {
   rowStyle,
 } from './styles.js'
 
+/** 复制结果提示的展示时长（ms）。 */
+const COPY_HINT_MS = 1800
+
 /** 弹窗的 props。 */
 export interface StructuredPromptModalProps {
   /** 表单字段。 */
@@ -39,40 +45,47 @@ export interface StructuredPromptModalProps {
   collapsed: readonly string[]
   /** store 动作。 */
   actions: FormActions
-  /** 写入输入框草稿。 */
-  setDraft: (text: string) => void
-  /** 会话标识（仅用于渲染判断，弹窗本身不请求数据）。 */
-  sessionId: string
   /** 关闭弹窗。 */
   onClose: () => void
+  /** 把成稿写入输入框并直接发送。 */
+  onSend: (prompt: string) => void
 }
 
 /**
  * 表单弹窗。
- * @param props - 表单、折叠状态、动作与关闭回调。
+ * @param props - 表单、折叠状态、动作与回调。
  * @returns 弹窗元素。
  */
 export function StructuredPromptModal({
-  form, collapsed, actions, setDraft, sessionId, onClose,
+  form, collapsed, actions, onClose, onSend,
 }: StructuredPromptModalProps): ReactNode {
-  const [returnPrompt, setReturnPrompt] = useState(false)
+  const [copyState, setCopyState] = useState<'ok' | 'failed' | null>(null)
   const importRef = useRef<HTMLInputElement>(null)
+  const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // 卸载时清掉未触发的提示定时器，避免在已卸载组件上 setState。
+  useEffect(() => () => {
+    if (copyTimer.current !== null) clearTimeout(copyTimer.current)
+  }, [])
 
   const prompt = buildSystemPrompt(form)
   const missing = validateForm(form)
-  const canSync = missing.length === 0 && prompt !== ''
+  const canSend = missing.length === 0 && prompt !== ''
 
-  /** 关闭弹窗并复位返回确认条。 */
-  const close = (): void => {
-    setReturnPrompt(false)
-    onClose()
+  /** 复制成稿到剪贴板，并短暂显示结果。 */
+  const copyPrompt = (): void => {
+    void copyText(prompt).then((ok) => {
+      setCopyState(ok ? 'ok' : 'failed')
+      if (copyTimer.current !== null) clearTimeout(copyTimer.current)
+      copyTimer.current = setTimeout(() => setCopyState(null), COPY_HINT_MS)
+    })
   }
 
-  /** 「同步并返回」：先写入草稿，再关闭。 */
-  const syncAndClose = (): void => {
-    if (!canSync) return
-    setDraft(prompt)
-    close()
+  /** 发送：把成稿交给宿主写入输入框并提交，然后关闭弹窗。 */
+  const send = (): void => {
+    if (!canSend) return
+    onSend(prompt)
+    onClose()
   }
 
   /** 导出当前表单为 JSON，便于在别的会话复用。 */
@@ -122,8 +135,6 @@ export function StructuredPromptModal({
         role="dialog"
         aria-modal
         aria-label="结构化输入任务"
-        // 会话切换时重置本地 UI 状态（返回确认条），避免带到新会话。
-        key={sessionId}
       >
         <div style={modalHeadStyle}>
           <div style={{ ...rowStyle, flex: '1 1 auto', minWidth: 0 }}>
@@ -140,23 +151,13 @@ export function StructuredPromptModal({
             title="关闭（不改动输入框内容）"
             ariaLabel="关闭"
             style={{ minWidth: 28, padding: '0 6px', fontSize: 14, lineHeight: 1 }}
-            onClick={close}
+            onClick={onClose}
           >
             ×
           </SmallButton>
         </div>
 
         <div data-scroll="" style={modalBodyStyle}>
-          {returnPrompt
-            ? (
-              <ReturnPromptBar
-                canSync={canSync}
-                onSyncAndClose={syncAndClose}
-                onCloseWithoutSync={close}
-              />
-            )
-            : null}
-
           {SECTIONS.map((section) => {
             const render = renderers[section.id]
             if (render === undefined) return null
@@ -181,13 +182,12 @@ export function StructuredPromptModal({
           onImportClick={() => importRef.current?.click()}
           importRef={importRef}
           onImportChange={importForm}
-          returnPrompt={returnPrompt}
-          onToggleReturn={() => setReturnPrompt(value => !value)}
+          onCopy={copyPrompt}
+          copyState={copyState}
+          onSend={send}
+          canSend={canSend}
         />
       </div>
     </div>
   )
 }
-
-/** 供面板组件透传的状态片段。 */
-export type ModalState = Pick<StructuredState, 'form' | 'collapsed'>

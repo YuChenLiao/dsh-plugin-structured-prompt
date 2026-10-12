@@ -4,6 +4,9 @@
  * 未打开时返回 `null` 不占空间（入口按钮由 `StructuredInputTrigger` 负责）。Esc
  * 关闭弹窗，避免困在表单里。
  *
+ * 发送经由宿主注入的 `onSend`：本组件不接触 `ctx`，也不假定输入框当前是否挂载
+ * —— 决策与副作用都留在 `apply` 闭包里。
+ *
  * hook 顺序：`useStore` 与 `useEffect` 都必须在任何提前返回**之前**调用 —— 开关会
  * 改变渲染分支，分支之后的 hook 会让数量随状态变化而抛错。
  */
@@ -20,19 +23,19 @@ export interface StructuredInputPanelProps {
   useStore: SnapshotSelectorHook<StructuredState>
   /** store 的写座位。 */
   actions: FormActions
-  /** 写入输入框草稿的宿主回调。 */
-  setDraft: (text: string) => void
+  /** 把成稿写入输入框并直接发送（由宿主注入）。 */
+  onSend: (prompt: string) => void
   /** 会话标识；无会话时不渲染。 */
   sessionId?: string
 }
 
 /**
  * 表单弹窗挂载点。
- * @param props - store 座位、草稿写入回调与会话标识。
+ * @param props - store 座位、发送回调与会话标识。
  * @returns 弹窗，或未打开时的 `null`。
  */
 export function StructuredInputPanel({
-  useStore, actions, setDraft, sessionId,
+  useStore, actions, onSend, sessionId,
 }: StructuredInputPanelProps): ReactNode {
   const active = useStore(state => state.active)
   const form = useStore(state => state.form)
@@ -57,9 +60,8 @@ export function StructuredInputPanel({
       form={form}
       collapsed={collapsed}
       actions={actions}
-      setDraft={setDraft}
-      sessionId={sessionId}
       onClose={() => actions.close()}
+      onSend={onSend}
     />
   )
 }
