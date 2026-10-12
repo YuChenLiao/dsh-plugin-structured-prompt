@@ -38,16 +38,6 @@ const BASELINE_MODULES = [
   '@deepseek-ai/dsh-client-ui-dockkit',
 ]
 
-/**
- * host 半边保持外部引用的包：由 DSH 运行时提供，本插件不声明依赖也不打包它们。
- *
- * 漏掉这一条会把这些包**内联**进产物 —— 那会与宿主各自加载的实例不一致，工具注册
- * 表面上看能跑，实际与 DSH 的 registry 不是同一个对象。
- */
-const HOST_EXTERNAL = [
-  '@deepseek-ai/dsh-tools',
-  '@deepseek-ai/cordis',
-]
 
 /**
  * 载入 DSH 源码树里的 tsdown。
@@ -79,8 +69,6 @@ async function buildHost(build) {
     dts: false,
     clean: false,
     sourcemap: false,
-    // 宿主提供的包保持外部引用，见 HOST_EXTERNAL 的说明。
-    deps: { neverBundle: HOST_EXTERNAL },
     // 包的 exports 指向 lib/index.js，产物名必须与之一致。
     outputOptions: { entryFileNames: 'index.js' },
   })

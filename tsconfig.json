@@ -31,10 +31,7 @@
     // 被 .gitignore 排除、运行时由 tools/lib/loader-hook.mjs 重定向。
     "paths": {
       "react": ["./.dev-deps/@types-react"],
-      "react/jsx-runtime": ["./.dev-deps/@types-react/jsx-runtime"],
-      // host 半边 import 的宿主包：类型取自**已安装的 DSH**（源码树里的包没有类型
-      // 产物）。运行时由 Loader 从宿主解析，构建时标为 external。
-      "@deepseek-ai/dsh-tools": ["./.dev-deps/dsh-tools"]
+      "react/jsx-runtime": ["./.dev-deps/@types-react/jsx-runtime"]
     }
   },
   "include": ["src/**/*.ts", "src/**/*.tsx"]

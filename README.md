@@ -94,6 +94,27 @@ host 半边注册一个工具 `build_structured_prompt`，让模型自己把模�
 
 > 一致性由 `tests/test-tool.mjs` 守住：同一组字段经工具与经表单产出必须**逐字相同**。将来若有人在工具里另写一套拼装，测试会失败。
 
+### 为什么工具定义是手写的，而不是用 `defineTool`
+
+`@deepseek-ai/dsh-tools`（提供 `defineTool`）**只能从 profile 的 node_modules 解析**。而
+`link:` 安装下插件经 junction 加载，ESM 会 **realpath** 到源码目录，向上找不到任何
+`node_modules`：
+
+```
+从 profile 的 junction 位置 import '@deepseek-ai/dsh-tools'  → OK
+从源码目录 import '@deepseek-ai/dsh-tools'                    → ERR_MODULE_NOT_FOUND
+```
+
+后果很隐蔽：模块加载失败 → 插件 fiber 停在**未激活**状态 → 工具不注册，**而且不报错**
+（巡检里表现为条目 `enabled: true` 但 `fiberPhase: null`，相邻插件都是 `"active"`）。
+`github:` 安装不会触发，因为包真实位于 profile 的 `node_modules` 下。
+
+所以 host 半边按 `ToolDefinition` 契约**手工构造**定义，**产物零 import**，与 client 半边
+「本地类型声明、不引入其包」的做法一致。代价是参数校验要自己写（`src/host/args.ts` 的
+`narrowArgs`）：不合规时**报错**而不是静默丢弃，失败说明会回到模型手里。
+
+`tests/verify-install.mjs` 断言 host 产物不含任何 `import` 行，防止这个约束被无意打破。
+
 ## 安装
 
 ### 从 GitHub 安装（推荐）

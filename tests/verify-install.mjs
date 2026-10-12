@@ -79,6 +79,12 @@ if (existsSync(hostEntry)) {
   try {
     const mod = await import(pathToFileURL(hostEntry).href)
     check('host 半边导出 apply()', typeof mod.apply === 'function')
+    check('host 半边导出 inject', Array.isArray(mod.inject))
+    // 自包含约束（见 README「为什么工具定义是手写的」）：import 任何宿主包都会让
+    // link: 安装下的插件停在未激活状态 —— 模块加载失败，而且不报错。
+    const hostText = readFileSync(hostEntry, 'utf8')
+    check('host 产物自包含（无 import / require）',
+      !/^\s*import[\s{'"]/m.test(hostText) && !/\brequire\(/.test(hostText))
   } catch (error) {
     check('host 半边可导入', false, String(error))
   }

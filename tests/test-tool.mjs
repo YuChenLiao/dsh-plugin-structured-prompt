@@ -49,7 +49,7 @@ check('描述为模型视角且提到 subagent',
   typeof definition.description === 'string'
   && definition.description.includes('subagent')
   && definition.description.includes('prompt'))
-check('参数 schema 是编译后的 JSON Schema',
+check('参数 schema 是标准 JSON Schema（含 required 数组）',
   definition.parameters.type === 'object' && typeof definition.parameters.properties === 'object')
 // 与表单同一条规则：身份与目标必填。这是产品决策（表单里就是这两项必填），
 // 工具侧不放松 —— 否则两个入口对"什么算可提交的提示词"会有两套标准。
@@ -120,7 +120,7 @@ try {
 } catch (error) {
   rejected = error
 }
-check('缺 role 的调用被 schema 层拒绝',
+check('缺 role 的调用被参数校验拒绝',
   rejected !== null && /role/.test(String(rejected?.message ?? rejected)),
   String(rejected?.message ?? rejected))
 
