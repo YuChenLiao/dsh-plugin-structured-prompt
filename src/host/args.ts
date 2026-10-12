@@ -19,6 +19,17 @@ export const STRING_FIELDS = [
   'output_format', 'output_spec', 'language_tone', 'fallback', 'examples',
 ] as const
 
+/**
+ * 需要按枚举校验的字段。
+ *
+ * 越界值不会报错，只会让下游**静默降级**（例如骨架查不到，输出格式段少一段），因此
+ * 在参数边界就拒绝：这个来源是模型，而模型能读懂错误信息并改正。
+ */
+const ENUM_FIELDS: Record<string, readonly string[]> = {
+  output_format: Object.keys(OUTPUT_FORMAT_SKELETONS),
+  tool_policy: ['auto', 'manual'],
+}
+
 /** 模型传入的参数（键全部可选；`role` / `goal` 由校验强制）。 */
 export interface ToolArgs extends Record<string, unknown> {
   role?: unknown
@@ -54,6 +65,14 @@ export function narrowArgs(raw: unknown): NarrowedArgs {
     if (value === undefined) continue
     if (!Array.isArray(value) || value.some(item => typeof item !== 'string')) {
       problems.push(`${field} must be an array of strings`)
+    }
+  }
+  // 枚举校验：越界值必须报错，不能让它带着 schema 外的取值进入构建流程。
+  for (const [field, allowed] of Object.entries(ENUM_FIELDS)) {
+    const value = args[field]
+    if (value === undefined) continue
+    if (typeof value !== 'string' || !allowed.includes(value)) {
+      problems.push(`${field} must be one of: ${allowed.join(', ')}`)
     }
   }
   if (problems.length > 0) throw new Error(`invalid arguments: ${problems.join('; ')}`)

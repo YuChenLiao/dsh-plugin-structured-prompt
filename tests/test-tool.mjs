@@ -112,8 +112,7 @@ const minimal = await run({ goal: '把这次改动写成一段说明' })
 check('只填必填两项也能产出提示词', minimal.prompt.includes('把这次改动写成一段说明'))
 check('必填齐备时无缺失项', minimal.missing.length === 0, minimal.missing.join(', '))
 check('未用模板时 template 为空串', minimal.template === '')
-// 必填是 schema 层的硬约束：defineTool 包装后的 execute 会先校验参数再进入函数体，
-// 所以缺 role 的调用在到达构建逻辑之前就被拒绝了。
+// 必填在**参数边界**就被拒绝：narrowArgs 在进入构建逻辑之前完成类型与枚举校验。
 let rejected = null
 try {
   await definition.execute({ goal: 'x' })
@@ -123,6 +122,18 @@ try {
 check('缺 role 的调用被参数校验拒绝',
   rejected !== null && /role/.test(String(rejected?.message ?? rejected)),
   String(rejected?.message ?? rejected))
+
+// 越界枚举也在参数边界拒绝：否则它会带着 schema 外的取值进入构建，下游只能静默降级
+// （骨架查不到 → 输出格式段少一段），而模型收到的却是"成功"。
+let badEnum = null
+try {
+  await run({ goal: 'x', output_format: 'csv' })
+} catch (error) {
+  badEnum = error
+}
+check('越界的 output_format 被参数校验拒绝',
+  badEnum !== null && /output_format/.test(String(badEnum?.message ?? badEnum)),
+  String(badEnum?.message ?? badEnum))
 
 // ---- 4) 模板：作默认值，调用参数覆盖 ----
 

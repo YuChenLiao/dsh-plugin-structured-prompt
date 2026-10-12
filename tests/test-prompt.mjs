@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url'
 
 const SHARED = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'shared')
 const prompt = await import(pathToFileURL(resolve(SHARED, 'prompt.ts')).href)
-const { buildSystemPrompt, validateForm, OUTPUT_FORMAT_SKELETONS } = prompt
+const { buildSystemPrompt, validateForm, OUTPUT_FORMAT_SKELETONS, applyFormatChoice } = prompt
 const { TEMPLATES, ALERT_TRIAGE_FIELDS } = await import(
   pathToFileURL(resolve(SHARED, 'templates.ts')).href
 )
@@ -137,6 +137,30 @@ const customSpec = buildSystemPrompt(form({ outputFormat: 'json', outputSpec: '�
 check('自定义说明优先于格式骨架', customSpec.includes('以 TOML 输出') && !customSpec.includes('以 JSON 输出'))
 check('自定义说明紧随「输出格式」标题',
   customSpec.includes('# 输出格式\n以 TOML 输出'))
+
+// 5c) 格式类型切换：说明里的骨架部分要被替换，追加过的内容要保留。
+//
+// 早先的规则是「说明已被手写就完全不覆盖」，于是用户改选格式类型后，产物里仍是旧格式
+// 的契约、而 UI 上已是新值 —— 两边静默分叉（子代理审查发现的回归）。
+const jsonWithExtra = `${OUTPUT_FORMAT_SKELETONS.json}\n- severity: "P0"`
+const switched = applyFormatChoice(jsonWithExtra, 'markdown')
+check('切换格式时只替换骨架部分、保留追加内容',
+  switched === `${OUTPUT_FORMAT_SKELETONS.markdown}\n- severity: "P0"`, switched)
+check('切换格式后产物与所选格式自洽',
+  buildSystemPrompt(form({ outputFormat: 'markdown', outputSpec: switched }))
+    .includes(OUTPUT_FORMAT_SKELETONS.markdown))
+check('说明为空时整段填入骨架',
+  applyFormatChoice('', 'table') === OUTPUT_FORMAT_SKELETONS.table)
+check('说明仍是某套骨架时整段替换',
+  applyFormatChoice(OUTPUT_FORMAT_SKELETONS.json, 'text') === OUTPUT_FORMAT_SKELETONS.text)
+check('完全手写的说明不被覆盖',
+  applyFormatChoice('以 TOML 输出', 'json') === '以 TOML 输出')
+check('清除格式选择时说明保持不变',
+  applyFormatChoice(OUTPUT_FORMAT_SKELETONS.json, '') === OUTPUT_FORMAT_SKELETONS.json)
+
+// 5d) 越界的格式类型不得让输出格式段静默少内容（骨架取不到时不应拼出空块）。
+check('越界格式类型不产生空的输出格式段',
+  !buildSystemPrompt(form({ outputFormat: 'csv', outputSpec: '' })).includes('# 输出格式'))
 
 // 6) 原始示例模板必须能复现「告警研判」示例的全部内容。
 const fromTemplate = buildSystemPrompt(form(ALERT_TRIAGE_FIELDS))

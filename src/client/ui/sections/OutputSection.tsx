@@ -1,8 +1,9 @@
 /**
  * 「输出与兜底」分组：格式类型 → 格式说明 → 字段级说明 → 语言语气 → 兜底 → 示例。
  *
- * 选格式类型时会顺带填入该格式的骨架，但只在正文为空、或正文仍是另一套骨架时
- * 覆盖 —— 用户手写过的内容不会被冲掉。
+ * 选格式类型时会顺带更新格式说明里的骨架部分：说明为空就整段填入；已在某套骨架基础
+ * 上追加过内容就只换骨架、保留追加；完全手写的说明不动（用户显式覆盖了格式类型）。
+ * 规则本身在 `shared/prompt.ts` 的 `applyFormatChoice`（纯函数，便于测试）。
  */
 import type { ReactNode } from 'react'
 import type { OutputFormat, PromptForm } from '../../../shared/types.js'
@@ -10,7 +11,7 @@ import type { FormActions } from '../actions.js'
 import { ChipGroup, Field, TextArea, TextInput } from '../base.js'
 import { ListEditor } from '../ListEditor.js'
 import { LIST_FIELDS, OUTPUT_FORMAT_OPTIONS } from '../config.js'
-import { OUTPUT_FORMAT_SKELETONS } from '../../../shared/prompt.js'
+import { applyFormatChoice } from '../../../shared/prompt.js'
 
 /** 输出与兜底分组的 props。 */
 export interface OutputSectionProps {
@@ -27,16 +28,10 @@ export interface OutputSectionProps {
  */
 export function OutputSection({ form, actions }: OutputSectionProps): ReactNode {
   const fields = LIST_FIELDS['fields']
-  /** 选择格式类型：必要时把骨架写进说明字段。 */
+  /** 选择格式类型：同步更新说明里的骨架部分。 */
   const pickFormat = (value: OutputFormat): void => {
     actions.setField('outputFormat', value)
-    if (value === '') return
-    const skeleton = OUTPUT_FORMAT_SKELETONS[value]
-    const known: string[] = Object.values(OUTPUT_FORMAT_SKELETONS)
-    const current = form.outputSpec.trim()
-    if (current === '' || known.includes(form.outputSpec)) {
-      actions.setField('outputSpec', skeleton)
-    }
+    actions.setField('outputSpec', applyFormatChoice(form.outputSpec, value))
   }
   return (
     <>

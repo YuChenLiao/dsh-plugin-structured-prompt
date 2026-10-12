@@ -45,6 +45,43 @@ export const OUTPUT_FORMAT_SKELETONS: Record<Exclude<OutputFormat, ''>, string> 
   text: '以纯文本输出，先给结论，再给依据，不要使用 Markdown 标记。',
 }
 
+/**
+ * 取某个格式类型的骨架。
+ *
+ * 用 `Object.hasOwn` 查表而不是直接下标取值：越界的格式类型（模型传了 schema 外的值、
+ * 或旧表单里的历史值）下标取值会得到 `undefined`，被后续 `join` 折叠成空串，于是整个
+ * 输出格式段静默少一段。查不到就明确返回空串，并由调用方决定是否拒绝该输入。
+ * @param format - 格式类型。
+ * @returns 骨架文本；空串或越界值返回空串。
+ */
+export function resolveSkeleton(format: OutputFormat): string {
+  if (!Object.hasOwn(OUTPUT_FORMAT_SKELETONS, format)) return ''
+  return OUTPUT_FORMAT_SKELETONS[format as Exclude<OutputFormat, ''>]
+}
+
+/**
+ * 按新选的格式类型更新「输出格式说明」。
+ *
+ * 客户端选格式时会把骨架写进说明字段供用户接着编辑，因此说明可能处于三种状态：
+ *  - 空、或恰好是某套骨架：整段替换；
+ *  - 在某套骨架基础上追加过内容：**只替换骨架部分**，保留追加的内容；
+ *  - 完全手写：不动 —— 说明才是最终契约，此时格式类型不再影响产物。
+ *
+ * 中间那条是关键：早先"已被手写就完全不覆盖"的规则会让用户改选格式后，产物里仍是
+ * 旧格式的契约（格式类型在 UI 上已高亮为新值），两边静默分叉。
+ * @param current - 当前的格式说明。
+ * @param format - 新选的格式类型；空串表示清除选择。
+ * @returns 更新后的格式说明。
+ */
+export function applyFormatChoice(current: string, format: OutputFormat): string {
+  const skeleton = resolveSkeleton(format)
+  if (skeleton === '') return current
+  const known: string[] = Object.values(OUTPUT_FORMAT_SKELETONS)
+  if (current.trim() === '' || known.includes(current)) return skeleton
+  const previous = known.find(item => current.startsWith(item))
+  return previous === undefined ? current : skeleton + current.slice(previous.length)
+}
+
 /** 工具调用策略为「自动」时的固定引导语。 */
 const TOOL_POLICY_AUTO = '由你根据任务需要自行判断并选择要调用的工具；不需要工具时直接回答。'
 
@@ -127,9 +164,8 @@ export function buildSystemPrompt(form: PromptForm): string {
   // `output_format` 走的也是同一条路径）。
   const languageTone = normalizeBlock(form.languageTone)
   const providedSpec = normalizeBlock(form.outputSpec)
-  const formatSkeleton = form.outputFormat === '' ? '' : OUTPUT_FORMAT_SKELETONS[form.outputFormat]
   const outputBody = [
-    providedSpec !== '' ? providedSpec : formatSkeleton,
+    providedSpec !== '' ? providedSpec : resolveSkeleton(form.outputFormat),
     fields.length === 0 ? '' : ['字段说明：', ...fields.map(item => `- ${item}`)].join('\n'),
     languageTone === '' ? '' : `表达要求：${languageTone}`,
   ].filter(text => text !== '').join('\n')
