@@ -1,6 +1,6 @@
 /**
- * 安装自检：确认插件已被 desktop profile 正确安装，产物符合 DSH 加载契约，并且
- * 源码保持模块化（单文件行数上限）。
+ * 安装自检：确认插件已被 profile 正确安装（`link:` 或 `github:` 皆可），产物符合
+ * DSH 加载契约，本地构建与源码同步，并且源码保持模块化（单文件行数上限）。
  *
  * 在源码变更或重新安装后运行，可在重启 DSH 之前发现问题。
  *
@@ -24,11 +24,30 @@ const check = (label, ok, detail = '') => {
   if (!ok) failures.push(label)
 }
 
-// 1) profile 的 node_modules 是否解析到本插件
-const linked = resolve(PROFILE_DIR, 'node_modules', PLUGIN_ID)
-check('profile node_modules 中的插件目录存在', existsSync(linked), linked)
-if (existsSync(linked)) {
-  check('该目录指向本插件源码', realpathSync(linked) === realpathSync(PLUGIN_ROOT), realpathSync(linked))
+// 1) profile 的 node_modules 里装到了本插件
+const installed = resolve(PROFILE_DIR, 'node_modules', PLUGIN_ID)
+check('profile node_modules 中的插件目录存在', existsSync(installed), installed)
+if (existsSync(installed)) {
+  // 两种安装方式都合法：`link:` 指向本工作区源码，`github:` 是独立副本。
+  const linkedHere = realpathSync(installed) === realpathSync(PLUGIN_ROOT)
+  const spec = readProfileDependency()
+  check('依赖指向本插件（link 本目录或 github 源）',
+    linkedHere || spec.startsWith('github:'), spec)
+  check('装到的包含 client 产物', existsSync(join(installed, 'lib', 'client.js')))
+  check('装到的包含 host 产物', existsSync(join(installed, 'lib', 'index.js')))
+  check('装到的包不含 node_modules（否则会破坏 pnpm 安装）',
+    !existsSync(join(installed, 'node_modules')))
+  // 本工作区不再有 node_modules：见 tools/setup-dev-links.mjs 的说明。
+  check('本工作区无 node_modules（开发依赖在 .dev-deps/）',
+    !existsSync(join(PLUGIN_ROOT, 'node_modules')))
+}
+
+/** 读取 profile 清单里本插件的依赖规格。 */
+function readProfileDependency() {
+  const manifestPath = resolve(PROFILE_DIR, 'package.json')
+  if (!existsSync(manifestPath)) return ''
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+  return String(manifest.dependencies?.[PLUGIN_ID] ?? '')
 }
 
 // 2) profile 清单是否声明依赖与 bundle
@@ -39,11 +58,19 @@ if (existsSync(manifestPath)) {
   check('profile bundles 注册了本插件', (manifest.dsh?.profile?.bundles ?? []).includes(PLUGIN_ID))
 }
 
-// 3) 生成了 Loader 行
-const cordisPath = resolve(PROFILE_DIR, 'cordis.yml')
-if (existsSync(cordisPath)) {
-  check('cordis.yml 含本插件的 Loader 行', readFileSync(cordisPath, 'utf8').includes(`id: ${PLUGIN_ID}`))
+// 3) Loader 行的来源。注意 cordis.yml 是**空的根**（内容就是 `[]`，其注释写明
+//    "Edit cordis.patch.yml, not this file"）：真正的配置树由 package.json 的
+//    `dsh.profile.bundles` 加上每个 bundle 自带的 cordis.patch.yml 在启动时合成。
+//    所以这里检查这两个**输入**，而不是去 cordis.yml 里找合成结果。
+const patchFile = resolve(PLUGIN_ROOT, 'cordis.patch.yml')
+check('插件自带 bundle patch 文件', existsSync(patchFile))
+if (existsSync(patchFile)) {
+  check('patch 声明了本插件的装载行',
+    readFileSync(patchFile, 'utf8').includes(`id: ${PLUGIN_ID}`))
 }
+const ownManifest = JSON.parse(readFileSync(resolve(PLUGIN_ROOT, 'package.json'), 'utf8'))
+check('清单的 dsh.bundle.patch 指向该文件', ownManifest.dsh?.bundle?.patch === './cordis.patch.yml',
+  String(ownManifest.dsh?.bundle?.patch))
 
 // 4) host 半边可被导入且导出 apply
 const hostEntry = resolve(PLUGIN_ROOT, 'lib', 'index.js')
@@ -94,6 +121,13 @@ check(`没有单文件超过 ${MAX_SOURCE_LINES} 行`, oversized.length === 0,
   oversized.map(row => `${row.file}=${row.lines}`).join(', '))
 check('入口文件保持精简（不承载 UI 实现）',
   readFileSync(resolve(sourceRoot, 'client', 'index.ts'), 'utf8').split('\n').length <= 140)
+
+// 7) 本地产物不比源码旧：改了 src 却忘记 build 时，提交出去的 lib 会落后于源码
+//    （而安装方加载的正是 lib）。
+const newestSource = Math.max(...sources.map(file => statSync(file).mtimeMs))
+const bundleTime = existsSync(clientEntry) ? statSync(clientEntry).mtimeMs : 0
+check('lib/client.js 不早于最新源码（已重新构建）', bundleTime >= newestSource,
+  `bundle=${new Date(bundleTime).toISOString()} newestSrc=${new Date(newestSource).toISOString()}`)
 
 if (failures.length > 0) {
   console.error(`\n${failures.length} 项检查未通过：${failures.join('; ')}`)

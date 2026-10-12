@@ -1,5 +1,10 @@
-# 开发态链接（tools/setup-dev-links.mjs 建立，指向 DSH 源码树）：
+# 开发态依赖（tools/setup-dev-links.mjs 建立，指向 DSH 源码树）：
 # 与机器路径绑定，不入库，克隆后跑一次 setup-dev-links.mjs 重建。
+#
+# 刻意用 .dev-deps 而不是 node_modules：本工程是 DSH 插件包，包目录一旦出现
+# node_modules，pnpm 在用 `link:` 安装后改走 `github:` 时会试图重建其中的符号
+# 链接，在 Windows 上以 ERR_PNPM_EPERM 失败，并把已装插件留成"已卸载"状态。
+.dev-deps/
 node_modules/
 
 # 编辑器与系统残留
@@ -8,5 +13,6 @@ Thumbs.db
 *.log
 
 # 注意：lib/ 是**故意入库**的构建产物 —— 从 GitHub 安装时 DSH 直接加载
-# lib/index.js 与 lib/client.js，因此安装方不需要自己构建。
+# lib/index.js 与 lib/client.js（client-modules 按字节读取该文件），
+# 因此安装方不需要自己构建。
 # 改动 src/ 后请运行 `node tools/lib/build.mjs` 并一并提交 lib/。

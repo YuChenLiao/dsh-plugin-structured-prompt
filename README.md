@@ -74,7 +74,7 @@ dsh plugin --profile desktop add github:YuChenLiao/dsh-plugin-structured-prompt
 dsh plugin --profile desktop add github:YuChenLiao/dsh-plugin-structured-prompt
 ```
 
-`dsh plugin add` 会同时登记依赖、bundle 与 Loader 行。仓库里已包含构建好的 `lib/`，因此**装完重启 DSH 即可**，不需要自己构建。
+`dsh plugin add` 会登记依赖并把它加入 `dsh.profile.bundles`。仓库里已包含构建好的 `lib/`，因此**装完重启 DSH 即可**，不需要自己构建。
 
 ### 本地开发安装
 
@@ -84,9 +84,34 @@ cd dsh-plugin-structured-prompt
 dsh plugin --profile desktop add link:$PWD
 ```
 
-链接方式下源码改动需要重新构建产物才生效（见下方「开发」）。
+链接方式下**改动 `src/` 后需要重新构建产物**才生效（见下方[开发](#开发)）。
 
-无论哪种方式，插件都通过 `dsh.bundle.patch` 挂载，**安装后需要重启 DSH**（客户端插件的模块图在启动时建立）。
+### 两种方式可以自由切换
+
+```powershell
+dsh plugin --profile desktop remove dsh-plugin-structured-prompt
+dsh plugin --profile desktop add github:YuChenLiao/dsh-plugin-structured-prompt
+```
+
+本插件的包目录**不含 `node_modules`**（开发期依赖放在 `.dev-deps/`，见 [开发](#开发)），所以在 `link:` 与 `github:` 之间来回切换不会再踩到 pnpm 重建符号链接失败的问题。
+
+### 为什么"装完要重启"而不是"改了配置文件"
+
+插件的装载行**不在 `cordis.yml` 里**。那个文件是**空的根**，全部内容就是：
+
+```yaml
+# The tree is composed as patches: each bundle in package.json's dsh.profile.bundles,
+# then cordis.patch.yml, then any --patch overlays. Edit cordis.patch.yml, not this file.
+[]
+```
+
+真正的装载树是 **DSH 启动时合成**的：按 `package.json` 的 `dsh.profile.bundles` 顺序叠加各 bundle，再叠加各 bundle 自带的 `cordis.patch.yml`（本插件的挂载声明就在那里）。
+
+因此：**安装、切换、卸载后都需要重启 DSH**；想在不重启的情况下查看合成结果，用：
+
+```powershell
+dsh --profile desktop --dump-config
+```
 
 ## 开发
 
@@ -102,8 +127,9 @@ $env:DSH_SOURCE_ROOT = "<上一步克隆出来的目录>"   # 默认按 D:\dsh\d
 然后：
 
 ```powershell
-# 1) 准备离线运行需要的链接（幂等，只需一次）
+# 1) 准备开发期依赖（幂等，只需一次）
 #    react / react-dom（测试与组件必须是同一实例）+ @types/react（类型检查）
+#    链接建在 .dev-deps/，**不是 node_modules** —— 理由见下方「为什么不用 node_modules」
 node tools/setup-dev-links.mjs
 
 # 2) 构建产物 lib/index.js（host）与 lib/client.js（浏览器）
@@ -112,6 +138,25 @@ node tools/lib/build.mjs
 # 3) 全部验证：类型检查 + 提示词行为 + 注册契约 + 渲染结构 + 安装产物
 node tools/run-tests.mjs
 ```
+
+### 为什么不用 node_modules
+
+本工程是一个 DSH 插件包，使用者会用 `dsh plugin add link:<本目录>` 或
+`add github:...` 安装它。**包目录里一旦出现 `node_modules`，pnpm 会把它的内容
+纳入该包的快照** —— 之后改用 `github:` 安装时，pnpm 会试图重建其中的符号链接，
+在 Windows 上以 `ERR_PNPM_EPERM` 失败，并把已装好的插件留成"已卸载"状态
+（依赖被移除、`bundles` 里也没有了）。
+
+所以开发期依赖一律放在 `node_modules` 之外的 `.dev-deps/`：
+
+| 用途 | 通道 |
+| --- | --- |
+| 类型检查 | `tsconfig.json` 的 `paths` 指向 `.dev-deps/@types-react` |
+| 测试运行 | `tools/lib/loader-hook.mjs` 把 `react` / `react-dom` 重定向过去 |
+| 版本控制 | `.gitignore` 排除该目录 |
+
+`tools/setup-dev-links.mjs` 还会顺手清掉历史遗留的 `node_modules/`。安装产物校验
+（`tests/verify-install.mjs`）也断言了"本工作区无 node_modules"。
 
 单跑某一套（`tsx` 提供 TS/TSX 转译，`TSX_TSCONFIG_PATH` 让 `jsx: react-jsx` 生效，
 `loader-hook` 负责依赖桩与 `.js`→`.ts` 说明符映射）：

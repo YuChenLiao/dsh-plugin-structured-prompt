@@ -20,7 +20,19 @@
     "forceConsistentCasingInFileNames": true,
     "isolatedModules": true,
     "verbatimModuleSyntax": true,
-    "noEmit": true
+    "noEmit": true,
+
+    // React 类型从 .dev-deps/ 解析，而不是 node_modules。
+    //
+    // 为什么不用 node_modules：本插件目录里一旦出现 node_modules（哪怕只是指向 DSH
+    // 源码树的 junction），pnpm 就会在后续安装中试图重建这些链接 —— 在 Windows 上
+    // 以 ERR_PNPM_EPERM 失败，并把已安装的插件留成"已卸载"状态。因此开发期依赖一律
+    // 放在 node_modules 之外的 .dev-deps/：由 tools/setup-dev-links.mjs 建立、
+    // 被 .gitignore 排除、运行时由 tools/lib/loader-hook.mjs 重定向。
+    "paths": {
+      "react": ["./.dev-deps/@types-react"],
+      "react/jsx-runtime": ["./.dev-deps/@types-react/jsx-runtime"]
+    }
   },
   "include": ["src/**/*.ts", "src/**/*.tsx"]
 }
