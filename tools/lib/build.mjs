@@ -39,6 +39,17 @@ const BASELINE_MODULES = [
 ]
 
 /**
+ * host 半边保持外部引用的包：由 DSH 运行时提供，本插件不声明依赖也不打包它们。
+ *
+ * 漏掉这一条会把这些包**内联**进产物 —— 那会与宿主各自加载的实例不一致，工具注册
+ * 表面上看能跑，实际与 DSH 的 registry 不是同一个对象。
+ */
+const HOST_EXTERNAL = [
+  '@deepseek-ai/dsh-tools',
+  '@deepseek-ai/cordis',
+]
+
+/**
  * 载入 DSH 源码树里的 tsdown。
  * @returns tsdown 的 `build` 函数。
  */
@@ -55,12 +66,12 @@ async function loadTsdown() {
   return mod.build
 }
 
-/** 构建 host 半边。 */
+/** 构建 host 半边（TS，入口为 src/index.ts）。 */
 async function buildHost(build) {
   await build({
     name: `${PLUGIN_ID}/host`,
     cwd: PLUGIN_ROOT,
-    entry: [resolve(PLUGIN_ROOT, 'src', 'index.js')],
+    entry: [resolve(PLUGIN_ROOT, 'src', 'index.ts')],
     outDir: resolve(PLUGIN_ROOT, 'lib'),
     format: ['esm'],
     platform: 'node',
@@ -68,6 +79,8 @@ async function buildHost(build) {
     dts: false,
     clean: false,
     sourcemap: false,
+    // 宿主提供的包保持外部引用，见 HOST_EXTERNAL 的说明。
+    deps: { neverBundle: HOST_EXTERNAL },
     // 包的 exports 指向 lib/index.js，产物名必须与之一致。
     outputOptions: { entryFileNames: 'index.js' },
   })
@@ -111,7 +124,7 @@ async function buildClient(build) {
 
 /** 源码入口存在性检查：防止构建静默产出空产物。 */
 function assertSources() {
-  for (const relative of ['src/index.js', 'src/client/index.ts']) {
+  for (const relative of ['src/index.ts', 'src/client/index.ts']) {
     const file = resolve(PLUGIN_ROOT, relative)
     if (!existsSync(file)) throw new Error(`构建入口缺失：${file}`)
   }

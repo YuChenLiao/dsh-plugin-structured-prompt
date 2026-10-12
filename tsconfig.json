@@ -22,7 +22,7 @@
     "verbatimModuleSyntax": true,
     "noEmit": true,
 
-    // React 类型从 .dev-deps/ 解析，而不是 node_modules。
+    // 依赖类型从 .dev-deps/ 解析，而不是 node_modules。
     //
     // 为什么不用 node_modules：本插件目录里一旦出现 node_modules（哪怕只是指向 DSH
     // 源码树的 junction），pnpm 就会在后续安装中试图重建这些链接 —— 在 Windows 上
@@ -31,7 +31,10 @@
     // 被 .gitignore 排除、运行时由 tools/lib/loader-hook.mjs 重定向。
     "paths": {
       "react": ["./.dev-deps/@types-react"],
-      "react/jsx-runtime": ["./.dev-deps/@types-react/jsx-runtime"]
+      "react/jsx-runtime": ["./.dev-deps/@types-react/jsx-runtime"],
+      // host 半边 import 的宿主包：类型取自**已安装的 DSH**（源码树里的包没有类型
+      // 产物）。运行时由 Loader 从宿主解析，构建时标为 external。
+      "@deepseek-ai/dsh-tools": ["./.dev-deps/dsh-tools"]
     }
   },
   "include": ["src/**/*.ts", "src/**/*.tsx"]

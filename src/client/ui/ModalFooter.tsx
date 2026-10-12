@@ -7,10 +7,10 @@
  * 关闭不在这里：标题栏的 `×` 与 Esc 已经覆盖，底部再放一个只是重复。
  */
 import type { ChangeEvent, ReactNode, RefObject } from 'react'
-import type { PromptForm } from '../types.js'
+import type { PromptForm } from '../../shared/types.js'
 import type { FormActions } from './actions.js'
 import { SmallButton } from './base.js'
-import { TEMPLATES } from '../templates.js'
+import { TEMPLATES } from '../../shared/templates.js'
 import { COLORS, buttonStyle, modalFootStyle, primaryButtonStyle, rowStyle } from './styles.js'
 
 /** 底部操作栏的 props。 */

@@ -4,7 +4,7 @@
  * 常开不可折叠 —— 它是必填项所在的分组，折叠只会让用户找不到入口。
  */
 import type { ReactNode } from 'react'
-import type { PromptForm } from '../../types.js'
+import type { PromptForm } from '../../../shared/types.js'
 import type { FormActions } from '../actions.js'
 import { Field, TextArea } from '../base.js'
 

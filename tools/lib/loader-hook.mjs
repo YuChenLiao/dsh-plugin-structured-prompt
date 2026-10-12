@@ -12,7 +12,7 @@
  *
  * 通过 `node --import <本文件>` 注册。
  */
-import { existsSync } from 'node:fs'
+import { existsSync, realpathSync } from 'node:fs'
 import { register } from 'node:module'
 import { pathToFileURL, fileURLToPath } from 'node:url'
 import { dirname, join, resolve } from 'node:path'
@@ -30,7 +30,17 @@ const DEV_DEPS = join(PLUGIN_ROOT, '.dev-deps')
  */
 const REDIRECTS = {}
 const redirect = (specifier, target) => {
-  if (existsSync(target)) REDIRECTS[specifier] = pathToFileURL(target).href
+  if (!existsSync(target)) return
+  // 解析 junction/symlink 到真实位置：被重定向的模块要能从**自己的** node_modules
+  // 环境解析依赖。`.dev-deps/` 里的链接指向插件目录之外，若保留链接路径，像
+  // `@deepseek-ai/dsh-tools` 那样依赖同级包的模块就会找不到 `@deepseek-ai/cordis`。
+  let resolved = target
+  try {
+    resolved = realpathSync(target)
+  } catch {
+    // 无法解析时保留原路径（行为与不重定向时一致）。
+  }
+  REDIRECTS[specifier] = pathToFileURL(resolved).href
 }
 
 // 宿主模块表提供的包。
@@ -40,11 +50,14 @@ redirect('react', join(DEV_DEPS, 'react', 'index.js'))
 redirect('react/jsx-runtime', join(DEV_DEPS, 'react', 'jsx-runtime.js'))
 redirect('react-dom', join(DEV_DEPS, 'react-dom', 'index.js'))
 redirect('react-dom/server', join(DEV_DEPS, 'react-dom', 'server.js'))
+// host 半边 import 的宿主包：测试直接跑源码，所以这里指向**已安装 DSH** 的实现
+// （它自己的同级依赖在同一个 node_modules 下，能继续正常解析）。
+redirect('@deepseek-ai/dsh-tools', join(DEV_DEPS, 'dsh-tools', 'lib', 'index.js'))
 
 if (!existsSync(DEV_DEPS)) {
   console.error(
     '[loader-hook] 未找到 .dev-deps/：请先运行 `node tools/setup-dev-links.mjs`'
-    + '（它会把 react / react-dom / @types-react 链接到 DSH 源码树）。',
+    + '（它会把 react / react-dom / @types-react / dsh-tools 链接到已安装环境）。',
   )
 }
 

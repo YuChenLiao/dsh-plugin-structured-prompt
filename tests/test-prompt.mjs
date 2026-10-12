@@ -10,13 +10,13 @@ import { pathToFileURL } from 'node:url'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const CLIENT = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'client')
-const prompt = await import(pathToFileURL(resolve(CLIENT, 'prompt.ts')).href)
+const SHARED = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'shared')
+const prompt = await import(pathToFileURL(resolve(SHARED, 'prompt.ts')).href)
 const { buildSystemPrompt, validateForm, OUTPUT_FORMAT_SKELETONS } = prompt
 const { TEMPLATES, ALERT_TRIAGE_FIELDS } = await import(
-  pathToFileURL(resolve(CLIENT, 'templates.ts')).href
+  pathToFileURL(resolve(SHARED, 'templates.ts')).href
 )
-const { createEmptyForm } = await import(pathToFileURL(resolve(CLIENT, 'forms.ts')).href)
+const { createEmptyForm } = await import(pathToFileURL(resolve(SHARED, 'forms.ts')).href)
 
 let failed = 0
 const check = (label, ok, detail = '') => {

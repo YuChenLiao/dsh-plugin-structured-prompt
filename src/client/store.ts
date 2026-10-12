@@ -10,8 +10,8 @@
  */
 import { defineStore } from '@deepseek-ai/dsh-client-store'
 import type { StoreHandle } from '@deepseek-ai/dsh-client-store'
-import type { ListFieldKey, PromptForm, StructuredState } from './types.js'
-import { completeForm, createEmptyForm } from './forms.js'
+import type { ListFieldKey, PromptForm, StructuredState } from '../shared/types.js'
+import { completeForm, createEmptyForm } from '../shared/forms.js'
 
 /**
  * 初始会话状态。

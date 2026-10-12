@@ -8,7 +8,7 @@
  * 增删都经由 store 的 `addTool` / `removeTool`，保证两个数组长度始终一致。
  */
 import type { ReactNode } from 'react'
-import type { PromptForm } from '../types.js'
+import type { PromptForm } from '../../shared/types.js'
 import { Field, SmallButton, TextInput } from './base.js'
 import type { FormActions } from './actions.js'
 import { COLORS, rowStyle } from './styles.js'

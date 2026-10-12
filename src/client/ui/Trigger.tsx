@@ -6,7 +6,7 @@
  */
 import type { ReactNode } from 'react'
 import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-store'
-import type { StructuredState } from '../types.js'
+import type { StructuredState } from '../../shared/types.js'
 import type { FormActions } from './actions.js'
 import { COLORS, triggerButtonStyle } from './styles.js'
 

@@ -2,7 +2,7 @@
   "name": "dsh-plugin-structured-prompt",
   "version": "0.1.0",
   "private": true,
-  "description": "DSH 结构化输入任务插件：把输入框切换为结构化提示词表单（身份/目标/硬性规则/工具策略/输出格式/兜底/示例），工具策略支持自动或由用户点名工具，构建完可同步回输入框",
+  "description": "DSH 结构化提示词插件：输入框里的结构化提示词表单（身份/目标/硬性规则/工具策略/输出格式/兜底/示例），并把同一套构建器注册为模型可调用的工具，供子代理使用",
   "type": "module",
   "main": "lib/index.js",
   "exports": {

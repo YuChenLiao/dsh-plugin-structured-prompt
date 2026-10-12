@@ -5,12 +5,12 @@
  * 覆盖 —— 用户手写过的内容不会被冲掉。
  */
 import type { ReactNode } from 'react'
-import type { OutputFormat, PromptForm } from '../../types.js'
+import type { OutputFormat, PromptForm } from '../../../shared/types.js'
 import type { FormActions } from '../actions.js'
 import { ChipGroup, Field, TextArea, TextInput } from '../base.js'
 import { ListEditor } from '../ListEditor.js'
 import { LIST_FIELDS, OUTPUT_FORMAT_OPTIONS } from '../config.js'
-import { OUTPUT_FORMAT_SKELETONS } from '../../prompt.js'
+import { OUTPUT_FORMAT_SKELETONS } from '../../../shared/prompt.js'
 
 /** 输出与兜底分组的 props。 */
 export interface OutputSectionProps {

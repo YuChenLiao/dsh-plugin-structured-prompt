@@ -12,7 +12,7 @@
  */
 import { useEffect, useRef, useState } from 'react'
 import type { ChangeEvent, ReactNode } from 'react'
-import type { PromptForm } from '../types.js'
+import type { PromptForm } from '../../shared/types.js'
 import type { FormActions } from './actions.js'
 import { SmallButton } from './base.js'
 import { CollapsibleSection } from './CollapsibleSection.js'
@@ -24,7 +24,7 @@ import { BasicSection } from './sections/BasicSection.js'
 import { OutputSection } from './sections/OutputSection.js'
 import { RulesSection } from './sections/RulesSection.js'
 import { ToolsSection } from './sections/ToolsSection.js'
-import { buildSystemPrompt, validateForm } from '../prompt.js'
+import { buildSystemPrompt, validateForm } from '../../shared/prompt.js'
 import {
   COLORS,
   maskStyle,

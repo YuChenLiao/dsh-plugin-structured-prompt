@@ -30,7 +30,10 @@ const SUITES = [
   { name: '提示词行为', script: join(ROOT, 'tests', 'test-prompt.mjs'), ts: true },
   { name: '注册契约', script: join(ROOT, 'tests', 'test-registration.mjs'), ts: true },
   { name: '渲染结构', script: join(ROOT, 'tests', 'test-render.mjs'), ts: true },
-  { name: '安装产物', script: join(ROOT, 'tests', 'verify-install.mjs'), ts: false },
+  { name: '工具行为', script: join(ROOT, 'tests', 'test-tool.mjs'), ts: true },
+  // verify-install 也走加载链：它要真正 import host 产物，而产物 import 的
+  // `@deepseek-ai/dsh-tools` 只有靠 loader-hook 才能解析到。
+  { name: '安装产物', script: join(ROOT, 'tests', 'verify-install.mjs'), ts: true },
 ]
 
 let failed = 0

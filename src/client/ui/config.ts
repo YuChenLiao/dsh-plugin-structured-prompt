@@ -4,7 +4,7 @@
  * 放在独立模块是为了让「表单长什么样」与「提示词怎么生成」各自有唯一归属：
  * 新增字段时这里加元数据、`prompt.ts` 加段落映射。
  */
-import type { ListFieldMeta, SectionMeta } from '../types.js'
+import type { ListFieldMeta, SectionMeta } from '../../shared/types.js'
 
 /**
  * 四个分组。基础信息常开，其余三组默认折叠但可展开。

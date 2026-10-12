@@ -66,6 +66,34 @@ dsh plugin --profile desktop add github:YuChenLiao/dsh-plugin-structured-prompt
 
 本插件是**提示词构建器**：DSH 的系统提示由主机每步组装，客户端插件没有「仅对单次对话注入 system prompt」的接口，因此产出的提示词以**普通用户消息**的形式投递进当前会话（或复制到剪贴板由你自行处置）。
 
+同一个构建器还以**工具**的形式暴露给模型（见下节），因此"人来填表单"和"模型自己构建"得到的提示词是同一份实现、同一份产物。
+
+## 模型可调用的工具
+
+host 半边注册一个工具 `build_structured_prompt`，让模型自己把模糊的委托变成精确提示词：
+
+```
+模型 → build_structured_prompt({ role, goal, rules: [...], output_format: 'json' })
+     → 返回构建好的提示词
+     → 模型把它作为 subagent 工具的 prompt 参数（或写进文件、用在自己身上）
+```
+
+| 项 | 说明 |
+| --- | --- |
+| 必填 | `role`（身份）、`goal`（目标）—— 与表单同一条规则 |
+| 可选 | 表单其余字段（`background` / `rules` / `forbidden` / `tool_policy` / `output_format` / `fallback` …） |
+| 模板 | `template` 可一键以内置模板为默认值，调用参数覆盖它 |
+| 返回 | `{ prompt, template, missing }`，模型看到的正文就是 `prompt` |
+
+几个刻意的取舍：
+
+- **只产出、不启动子代理**。工具返回文本，调用方自行决定用途（作为 `subagent.prompt`、写文件、自用）。因此本插件对子代理机制零耦合，也不需要关心 provider、前后台、深度限制。
+- **空串与空数组算「未给」**。用模板时传 `rules: []` 的意图是"没额外要求"，而不是"删掉模板的规则"。
+- **`callable_tools` 收一个数组**，每项写成 `工具名` 或 `工具名：用途`，由工具拆成表单那两个按索引配对的数组。
+- **选了 `output_format` 就补该格式骨架**，且只在本字段为空、或正文仍恰好是另一套骨架时覆盖 —— 与表单里点选格式的行为**逐字一致**（这条由测试直接断言两个入口产出相同）。
+
+> 一致性由 `tests/test-tool.mjs` 守住：同一组字段经工具与经表单产出必须**逐字相同**。将来若有人在工具里另写一套拼装，测试会失败。
+
 ## 安装
 
 ### 从 GitHub 安装（推荐）
@@ -128,14 +156,15 @@ $env:DSH_SOURCE_ROOT = "<上一步克隆出来的目录>"   # 默认按 D:\dsh\d
 
 ```powershell
 # 1) 准备开发期依赖（幂等，只需一次）
-#    react / react-dom（测试与组件必须是同一实例）+ @types/react（类型检查）
+#    react / react-dom（测试与组件必须是同一实例）、@types/react（类型检查）、
+#    @deepseek-ai/dsh-tools（host 半边 import 的宿主包，只取类型；运行时由 Loader 提供）
 #    链接建在 .dev-deps/，**不是 node_modules** —— 理由见下方「为什么不用 node_modules」
 node tools/setup-dev-links.mjs
 
 # 2) 构建产物 lib/index.js（host）与 lib/client.js（浏览器）
 node tools/lib/build.mjs
 
-# 3) 全部验证：类型检查 + 提示词行为 + 注册契约 + 渲染结构 + 安装产物
+# 3) 全部验证：类型检查 + 提示词行为 + 工具行为 + 注册契约 + 渲染结构 + 安装产物
 node tools/run-tests.mjs
 ```
 
@@ -151,8 +180,8 @@ node tools/run-tests.mjs
 
 | 用途 | 通道 |
 | --- | --- |
-| 类型检查 | `tsconfig.json` 的 `paths` 指向 `.dev-deps/@types-react` |
-| 测试运行 | `tools/lib/loader-hook.mjs` 把 `react` / `react-dom` 重定向过去 |
+| 类型检查 | `tsconfig.json` 的 `paths` 指向 `.dev-deps/@types-react` 与 `.dev-deps/dsh-tools` |
+| 测试运行 | `tools/lib/loader-hook.mjs` 把 `react` / `react-dom` / `@deepseek-ai/dsh-tools` 重定向过去 |
 | 版本控制 | `.gitignore` 排除该目录 |
 
 `tools/setup-dev-links.mjs` 还会顺手清掉历史遗留的 `node_modules/`。安装产物校验
@@ -172,25 +201,29 @@ node --import file:///D:/dsh/deepseek-harness/node_modules/tsx/dist/loader.mjs `
 单文件不超过 **260 行**（由 `tests/verify-install.mjs` 断言），入口只做装配：
 
 ```text
-src/index.js                   host 半边（空 apply，无模型可见输入）
-src/client/
-  index.ts                     插件主体：槽位注册 + 样式注入（无 UI 实现）
+src/index.ts                   host 半边入口：注册模型可调用的工具
+src/host/
+  tool.ts                      工具定义（参数 → 表单 → 提示词）
+  parameters.ts                参数与输出 schema（纯数据）
+src/shared/                    两个半边共用的纯逻辑（无客户端/宿主依赖）
   types.ts                     共享类型（表单、状态、分组元数据）
   forms.ts                     空白表单与片段补全
-  store.ts                     会话状态（defineStore 动作表）
   prompt.ts                    提示词构建核心（纯函数，段落顺序是契约）
   templates.ts                 内置模板库（填字段，不填成稿）
+src/client/
+  index.ts                     客户端入口：槽位注册 + 样式注入（无 UI 实现）
+  store.ts                     会话状态（defineStore 动作表）
   dsh-client-store.d.ts        DSH store 的本地类型声明（不引入其包）
   ui/
     theme.ts                   颜色 token 与文本域尺寸
     styles.ts                  样式对象 + 三条布局不变量 + PANEL_CSS
     config.ts                  分组与逐条字段的元数据
     actions.ts                 组件侧的动作类型（打断循环引用）
+    clipboard.ts               剪贴板写入（含 execCommand 降级）
     base.tsx                   TextArea / TextInput / Field / SmallButton / ChipGroup
     ListEditor.tsx             逐条增删改序
     ToolPairEditor.tsx         工具名 ↔ 用途配对编辑
     CollapsibleSection.tsx     可折叠分组容器
-    ReturnPromptBar.tsx        返回二选一
     Preview.tsx                提示词预览
     ModalFooter.tsx            底部操作栏
     Modal.tsx                  弹窗三段结构
@@ -199,13 +232,16 @@ src/client/
     sections/                  四个分组各自的字段
       BasicSection.tsx  RulesSection.tsx  ToolsSection.tsx  OutputSection.tsx
 tools/
-  lib/build.mjs                构建脚本（tsdown）
-  lib/loader-hook.mjs          测试用依赖桩 + 说明符映射
+  lib/build.mjs                构建脚本（tsdown，两个半边）
+  lib/loader-hook.mjs          测试用重定向（react / dsh-tools / 依赖桩）+ .js→.ts 映射
   lib/store-stub.mjs           defineStore 的离线实现
-  setup-dev-links.mjs          开发态链接
-  run-tests.mjs                五套验证的统一入口
-tests/                         test-prompt / test-registration / test-render / verify-install
+  setup-dev-links.mjs          开发态依赖链接（.dev-deps/）
+  run-tests.mjs                六套验证的统一入口
+tests/                         test-prompt / test-tool / test-registration / test-render / verify-install
 ```
+
+`src/shared/` 是**两个半边的交汇点**：客户端表单与模型工具都调用同一份 `buildSystemPrompt`，
+所以两种入口产出的提示词必然一致（`tests/test-tool.mjs` 会逐字比对）。
 
 ### 槽位注册契约（注册测试守住的那条线）
 

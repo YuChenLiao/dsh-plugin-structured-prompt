@@ -5,7 +5,7 @@
  * 只有那时工具清单会进入提示词。
  */
 import type { ReactNode } from 'react'
-import type { PromptForm, ToolPolicy } from '../../types.js'
+import type { PromptForm, ToolPolicy } from '../../../shared/types.js'
 import type { FormActions } from '../actions.js'
 import { ChipGroup, Field, TextArea } from '../base.js'
 import { ListEditor } from '../ListEditor.js'

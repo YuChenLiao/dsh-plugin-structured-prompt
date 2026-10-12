@@ -4,7 +4,7 @@
  * 数组字段的形状由 `ListFieldMeta` 描述，本控件不认识字段语义。
  */
 import type { ReactNode } from 'react'
-import type { ListFieldMeta } from '../types.js'
+import type { ListFieldMeta } from '../../shared/types.js'
 import { Field, SmallButton, TextInput } from './base.js'
 import type { FormActions } from './actions.js'
 import { rowStyle } from './styles.js'

@@ -24,7 +24,10 @@ import { resolve, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const PLUGIN_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+const PLUGIN_ID = 'dsh-plugin-structured-prompt'
 const HARNESS_ROOT = process.env.DSH_SOURCE_ROOT ?? 'D:\\dsh\\deepseek-harness'
+/** 已安装的 profile：host 包的类型从它解析（见 linkHostPackage）。 */
+const PROFILE_DIR = process.env.DSH_PROFILE_DIR ?? 'C:\\Users\\LYC\\.dsh\\profiles\\desktop'
 const DEV_DEPS = join(PLUGIN_ROOT, '.dev-deps')
 
 /**
@@ -81,6 +84,37 @@ function link(name, source) {
   console.log(`OK    建立链接 .dev-deps/${name} -> ${source}`)
 }
 
+/**
+ * 链接一个**宿主提供**的 DSH 包（类型用）。
+ *
+ * 与 react 不同，这类包的解析基准必须是**已安装的 profile** 而不是源码树：源码树里的
+ * 包只有 `src/*.ts`、没有 `lib/types/*.d.ts`，而本工程的 tsconfig 并没有 DSH 自己的
+ * workspace paths，无法顺着源码互相引用解析下去。
+ * @param packageName - 包名。
+ * @param dirName - 在 `.dev-deps/` 下的目录名。
+ */
+function linkHostPackage(packageName, dirName) {
+  // 从插件自身的安装位置解析最准（它的上层就是 DSH 的包布局）；其次退回 profile 根。
+  const bases = [
+    join(PROFILE_DIR, 'node_modules', PLUGIN_ID, 'package.json'),
+    join(PROFILE_DIR, 'package.json'),
+  ]
+  for (const base of bases) {
+    if (!existsSync(base)) continue
+    try {
+      const resolved = createRequire(base).resolve(`${packageName}/package.json`)
+      link(dirName, dirname(resolved))
+      return
+    } catch {
+      // 这个基准解析不到：试下一个。
+    }
+  }
+  console.warn(
+    `WARN  无法在 ${PROFILE_DIR} 解析 ${packageName}；`
+    + 'host 半边会缺少类型（先安装插件，或用 DSH_PROFILE_DIR 指向正确的 profile）。',
+  )
+}
+
 mkdirSync(DEV_DEPS, { recursive: true })
 
 // 运行时包：测试与组件必须是同一实例（见文件头）。
@@ -90,6 +124,12 @@ link('react-dom', locate('react-dom'))
 // 类型：与运行时 react 同版本，避免 JSX 类型漂移。目录名取 `@types-react` 而不是
 // 嵌套的 `@types/react`，少一层目录，也让 tsconfig 的 paths 更直白。
 link('@types-react', locate('@types/react', [join('packages', 'client', 'ui-primitives')]))
+
+// 宿主包：host 半边 `import { defineTool } from '@deepseek-ai/dsh-tools'`。运行时由
+// Loader 从宿主解析（构建时标为 external），但**类型**需要真实来源，否则 tsc 报
+// 找不到模块。这里从已安装的 profile 视角解析 —— 源码树里的包没有类型产物，只有
+// 已安装的 DSH 才有 `lib/types/*.d.ts`。
+linkHostPackage('@deepseek-ai/dsh-tools', 'dsh-tools')
 
 // 顺带清掉历史遗留：早期版本把链接建在 node_modules/，它会破坏 pnpm 安装。
 const legacy = join(PLUGIN_ROOT, 'node_modules')

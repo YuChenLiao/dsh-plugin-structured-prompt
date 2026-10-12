@@ -4,7 +4,7 @@
  * 两个字段都是逐条编辑的数组，分别渲染为编号列表与子块（见 `prompt.ts`）。
  */
 import type { ReactNode } from 'react'
-import type { PromptForm } from '../../types.js'
+import type { PromptForm } from '../../../shared/types.js'
 import type { FormActions } from '../actions.js'
 import { ListEditor } from '../ListEditor.js'
 import { LIST_FIELDS } from '../config.js'

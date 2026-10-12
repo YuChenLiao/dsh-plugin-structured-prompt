@@ -5,7 +5,7 @@
  * 组的 `collapsible` 为 `false`，标题行退化为不可点击的分隔线。
  */
 import type { ReactNode } from 'react'
-import type { SectionMeta } from '../types.js'
+import type { SectionMeta } from '../../shared/types.js'
 import type { FormActions } from './actions.js'
 import { COLORS, sectionBodyStyle, sectionHeadStyle, sectionStyle } from './styles.js'
 
