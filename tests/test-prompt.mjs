@@ -123,6 +123,21 @@ check('字段级说明并入输出格式段', extended.includes('字段说明：
 check('表达要求并入输出格式段', extended.includes('表达要求：中文简洁'))
 check('JSON 骨架被填入输出格式段', extended.includes(OUTPUT_FORMAT_SKELETONS.json))
 
+// 5b) 回归防线：格式类型与格式说明**同时**给出时，骨架只出现一次。
+//
+// 客户端的 pickFormat 会把骨架写进 outputSpec，早先的实现又在 outputBody 里按
+// outputFormat 拼了一遍，于是"选了格式"的表单产出两遍骨架（工具侧 output_format
+// 走同一路径，同样重复）。
+const bothGiven = buildSystemPrompt(form({ outputFormat: 'json', outputSpec: OUTPUT_FORMAT_SKELETONS.json }))
+const skeletonOccurrences = bothGiven.split(OUTPUT_FORMAT_SKELETONS.json).length - 1
+check('格式与说明同时给出时骨架不重复', skeletonOccurrences === 1, `出现 ${skeletonOccurrences} 次`)
+
+// 自定义说明优先于格式骨架，且位置在「输出格式」段开头。
+const customSpec = buildSystemPrompt(form({ outputFormat: 'json', outputSpec: '以 TOML 输出' }))
+check('自定义说明优先于格式骨架', customSpec.includes('以 TOML 输出') && !customSpec.includes('以 JSON 输出'))
+check('自定义说明紧随「输出格式」标题',
+  customSpec.includes('# 输出格式\n以 TOML 输出'))
+
 // 6) 原始示例模板必须能复现「告警研判」示例的全部内容。
 const fromTemplate = buildSystemPrompt(form(ALERT_TRIAGE_FIELDS))
 check('告警研判模板含阈值约束与 3 条编号规则',

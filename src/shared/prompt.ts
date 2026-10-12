@@ -120,13 +120,18 @@ export function buildSystemPrompt(form: PromptForm): string {
     toolFailure === '' ? '' : `工具失败时：${toolFailure}`,
   ].filter(text => text !== '').join('\n')
 
-  // 输出格式段：格式类型骨架 → 字段级说明 → 表达要求 → 自定义说明。
+  // 输出格式段：格式说明 → 字段级说明 → 表达要求。
+  //
+  // 格式说明是「自定义优先，否则由格式类型生成骨架」的**二选一**：客户端的 `pickFormat`
+  // 会把骨架写进 `outputSpec`，若两者各拼一遍，选了格式的表单就产出重复骨架（工具侧的
+  // `output_format` 走的也是同一条路径）。
   const languageTone = normalizeBlock(form.languageTone)
+  const providedSpec = normalizeBlock(form.outputSpec)
+  const formatSkeleton = form.outputFormat === '' ? '' : OUTPUT_FORMAT_SKELETONS[form.outputFormat]
   const outputBody = [
-    form.outputFormat === '' ? '' : OUTPUT_FORMAT_SKELETONS[form.outputFormat],
+    providedSpec !== '' ? providedSpec : formatSkeleton,
     fields.length === 0 ? '' : ['字段说明：', ...fields.map(item => `- ${item}`)].join('\n'),
     languageTone === '' ? '' : `表达要求：${languageTone}`,
-    normalizeBlock(form.outputSpec),
   ].filter(text => text !== '').join('\n')
 
   const fallback = normalizeBlock(form.fallback)
