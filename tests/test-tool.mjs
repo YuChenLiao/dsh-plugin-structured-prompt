@@ -18,6 +18,37 @@ const toolModule = await import(pathToFileURL(resolve(SRC, 'host', 'tool.ts')).h
 const prompt = await import(pathToFileURL(resolve(SRC, 'shared', 'prompt.ts')).href)
 const { completeForm } = await import(pathToFileURL(resolve(SRC, 'shared', 'forms.ts')).href)
 const { TEMPLATES } = await import(pathToFileURL(resolve(SRC, 'shared', 'templates.ts')).href)
+const { resolveProviderName, runForeground } = await import(
+  pathToFileURL(resolve(SRC, 'host', 'subagents.ts')).href
+)
+
+/** 一个立即 settle 的假子代理运行。 */
+function fakeRun(id, result, onDispose) {
+  return {
+    id,
+    result: Promise.resolve(result),
+    dispose: async () => { onDispose() },
+  }
+}
+
+/** 造一个只有单个 provider 的假子代理服务。 */
+function fakeSubagents(makeRun) {
+  return {
+    list: () => ['only'],
+    getProvider: name => (name === 'only' ? { name } : undefined),
+    start: async () => makeRun(),
+  }
+}
+
+/** 捕获一次调用的错误。 */
+async function rejectionOf(fn) {
+  try {
+    await fn()
+    return null
+  } catch (error) {
+    return error
+  }
+}
 
 let failed = 0
 const check = (label, ok, detail = '') => {
@@ -187,6 +218,133 @@ check('output schema 声明了 prompt/template/missing',
 const withMissing = definition.output.render(args, { ...produced, missing: ['goal'] })
 check('有缺失字段时 render 追加说明',
   withMissing[0].text.includes('goal') && withMissing[0].text.length > produced.prompt.length)
+
+// ---- 6b) 调用卡片 ----
+
+check('提供 presentCall', typeof definition.presentCall === 'function')
+const card = definition.presentCall?.({ goal: '审查本次改动', role: '严格的高级工程师' })
+check('卡片标题取本次目标', card?.title === '审查本次改动', String(card?.title))
+check('卡片是 generic 类型', card?.card === 'generic' && card?.kind === 'other')
+check('卡片带上原始参数', card?.rawInput !== undefined)
+check('缺 goal 时标题回退到工具名',
+  definition.presentCall?.({})?.title === toolModule.STRUCTURED_PROMPT_TOOL)
+check('goal 是空白时也回退',
+  definition.presentCall?.({ goal: '   ' })?.title === toolModule.STRUCTURED_PROMPT_TOOL)
+// presentCall 会用于历史回放，参数可能是旧形状：必须容错而不是抛错。
+check('参数形状异常时不抛错', (() => {
+  try {
+    definition.presentCall?.(null)
+    definition.presentCall?.('string')
+    definition.presentCall?.({ goal: 123 })
+    return definition.presentCall?.({ goal: 123 })?.title === toolModule.STRUCTURED_PROMPT_TOOL
+  } catch {
+    return false
+  }
+})())
+// 结果是整段提示词：再写一份 presentResult 只会把同一段大文本塞进视图载荷。
+check('不提供 presentResult（交给通用卡片读 durable 内容）',
+  definition.presentResult === undefined)
+
+// ---- 6c) 直投子代理 ----
+
+check('参数表含 delegate', 'delegate' in properties)
+check('输出 schema 含 delegated',
+  definition.output.schema.properties.delegated !== undefined
+  && definition.output.schema.required.includes('delegated'))
+check('不委托时 delegated 为空串',
+  (await run({ goal: 'g' })).delegated === '')
+
+// provider 选择：不引入配置项，靠候选数量决定是否需要显式指定。
+check('只有一个 provider 时自动选它', resolveProviderName(fakeSubagents(() => {}), undefined) === 'only')
+check('显式指定可用 provider',
+  resolveProviderName(fakeSubagents(() => {}), 'only') === 'only')
+const manyError = await rejectionOf(async () => {
+  resolveProviderName({ ...fakeSubagents(() => {}), list: () => ['a', 'b'] }, undefined)
+})
+check('多个 provider 且未指定时报错并列出候选',
+  manyError !== null && manyError.message.includes('a, b'), String(manyError?.message))
+const noneError = await rejectionOf(async () => {
+  resolveProviderName({ ...fakeSubagents(() => {}), list: () => [] }, undefined)
+})
+check('没有 provider 时报错',
+  noneError !== null && noneError.message.includes('no subagent provider'), String(noneError?.message))
+const unknownError = await rejectionOf(async () => {
+  resolveProviderName(fakeSubagents(() => {}), 'nope')
+})
+check('指定不存在的 provider 时报错并列出可用值',
+  unknownError !== null && unknownError.message.includes('only'), String(unknownError?.message))
+
+// 前台 run：成功路径
+let disposed = false
+const okOutcome = await runForeground(
+  fakeSubagents(() => fakeRun('child-1', {
+    output: [{ type: 'text', text: 'done' }, { type: 'text', text: '!' }],
+    stopReason: 'completed',
+  }, () => { disposed = true })),
+  'only', 'the prompt', 'label', { id: 'agent' }, new AbortController().signal,
+)
+check('成功路径拼接全部文本块', okOutcome.output === 'done!', okOutcome.output)
+check('成功后释放了子代理运行', disposed === true)
+
+// 前台 run：非 completed 终态算失败，但部分输出要带上，且仍然释放运行
+let disposedOnFailure = false
+const failedRun = await rejectionOf(() => runForeground(
+  fakeSubagents(() => fakeRun('child-2', {
+    output: [{ type: 'text', text: 'partial answer' }],
+    stopReason: 'max-tokens',
+  }, () => { disposedOnFailure = true })),
+  'only', 'p', 'l', { id: 'agent' }, new AbortController().signal,
+))
+check('非 completed 终态抛错', failedRun !== null && failedRun.message.includes('token limit'),
+  String(failedRun?.message))
+check('失败说明带上部分输出', String(failedRun?.message).includes('partial answer'))
+check('失败路径也释放了运行', disposedOnFailure === true)
+
+// 工具层：没有 subagents 服务时要说清替代做法（而不是静默失败）
+const noService = await rejectionOf(() => definition.execute(
+  { role: 'r', goal: 'g', delegate: {} },
+  { signal: new AbortController().signal, agent: { id: 'agent' } },
+))
+check('没有 subagents 服务时 delegate 被拒并指出替代做法',
+  noService !== null && noService.message.includes('subagents') && noService.message.includes('without `delegate`'),
+  String(noService?.message))
+
+const withService = toolModule.createStructuredPromptTool({
+  tools: { register: () => () => {} },
+  get: name => (name === 'subagents'
+    ? fakeSubagents(() => fakeRun('child-3', {
+      output: [{ type: 'text', text: 'child output' }],
+      stopReason: 'completed',
+    }, () => {}))
+    : undefined),
+})
+const noAgent = await rejectionOf(() => withService.execute(
+  { role: 'r', goal: 'g', delegate: {} },
+  { signal: new AbortController().signal },
+))
+check('没有 owning agent 时 delegate 被拒',
+  noAgent !== null && noAgent.message.includes('no owning agent'), String(noAgent?.message))
+
+const delegated = await withService.execute(
+  { role: '审查员', goal: '审查本次改动', delegate: { label: 'review' } },
+  { signal: new AbortController().signal, agent: { id: 'agent' } },
+)
+check('委托时返回子代理输出', delegated.delegated === 'child output', delegated.delegated)
+check('委托时仍回传构建好的提示词', delegated.prompt.includes('审查本次改动'))
+const delegatedRender = withService.output.render(null, delegated)
+check('委托时 render 说明提示词未进入本上下文',
+  delegatedRender[0].text.includes('not added to this context')
+  && delegatedRender[0].text.includes('child output'))
+
+// delegate 的子字段也走参数校验
+check('delegate 的未知子字段被拒', (await rejectionOf(() => withService.execute(
+  { role: 'r', goal: 'g', delegate: { nope: 1 } },
+  { signal: new AbortController().signal, agent: { id: 'agent' } },
+))) !== null)
+check('delegate 非对象被拒', (await rejectionOf(() => withService.execute(
+  { role: 'r', goal: 'g', delegate: 'yes' },
+  { signal: new AbortController().signal, agent: { id: 'agent' } },
+))) !== null)
 
 // ---- 7) 注册面 ----
 

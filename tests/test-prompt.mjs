@@ -13,8 +13,11 @@ import { fileURLToPath } from 'node:url'
 const SHARED = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'shared')
 const prompt = await import(pathToFileURL(resolve(SHARED, 'prompt.ts')).href)
 const {
-  buildSystemPrompt, validateForm, OUTPUT_FORMAT_SKELETONS, applyFormatChoice, formatSpecStatus,
+  buildSystemPrompt, validateForm, OUTPUT_FORMAT_SKELETONS,
 } = prompt
+const { applyFormatChoice, formatSpecStatus } = await import(
+  pathToFileURL(resolve(SHARED, 'format.ts')).href
+)
 const { TEMPLATES, ALERT_TRIAGE_FIELDS } = await import(
   pathToFileURL(resolve(SHARED, 'templates.ts')).href
 )

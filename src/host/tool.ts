@@ -3,24 +3,22 @@
  *
  * 与客户端表单**共用** `src/shared/prompt.ts` 的构建逻辑，因此两个入口产出的提示词
  * 完全一致（段落顺序、省略规则、编号格式都是同一份实现）。参数与输出 schema 见
- * `parameters.ts`，参数收窄与映射工具见 `args.ts`。
+ * `parameters.ts`，参数收窄见 `args.ts`，纯构建见 `build.ts`。
  *
- * 工具只**产出**提示词，不启动子代理：模型拿到文本后自行决定用途 —— 作为 `subagent`
- * 的 `prompt` 参数、写进文件、或用在自己身上。这样本插件对子代理机制零耦合，也不
- * 需要关心 provider、前后台、深度限制等策略。
+ * 默认只**产出**提示词；带 `delegate` 时改为**直投子代理**（见 `subagents.ts`）—— 那时
+ * 提示词不再进入主上下文，这正是长提示词走这条路径的意义。
  *
  * **不 import 任何宿主包**：工具定义按 DSH 的 `ToolDefinition` 契约手工构造（理由见
  * `parameters.ts`）。这是本插件在 `link:` 安装下能正常激活的前提 —— 宿主包只能从
  * profile 的 node_modules 解析，而 link 经 junction 加载后 ESM 会 realpath 到源码目录，
  * 那里没有任何 node_modules。
  */
-import { completeForm } from '../shared/forms.js'
-import { buildSystemPrompt, validateForm } from '../shared/prompt.js'
-import { TEMPLATES } from '../shared/templates.js'
-import type { OutputFormat, PromptForm, ToolPolicy } from '../shared/types.js'
-import { narrowArgs, prefer, resolveOutputSpec, splitCallableTools } from './args.js'
-import type { NarrowedArgs } from './args.js'
+import { narrowArgs } from './args.js'
+import { buildFromArgs } from './build.js'
+import type { StructuredPromptValue } from './build.js'
 import { TOOL_DESCRIPTION, TOOL_OUTPUT_SCHEMA, TOOL_PARAMETERS_SCHEMA } from './parameters.js'
+import { resolveProviderName, runForeground } from './subagents.js'
+import type { SubagentsServiceLike } from './subagents.js'
 
 /** 模型可见的工具名。 */
 export const STRUCTURED_PROMPT_TOOL = 'build_structured_prompt'
@@ -31,14 +29,32 @@ export interface TextBlock {
   readonly text: string
 }
 
-/** 工具的 canonical 输出值。 */
-export interface StructuredPromptValue {
-  /** 构建好的提示词。 */
-  readonly prompt: string
-  /** 用作底座的模板 id；未指定时为空串。 */
-  readonly template: string
-  /** 补全后仍为空的必填项（正常为空）。 */
-  readonly missing: string[]
+/** 工具的 canonical 输出值 = 构建结果 + 委托输出。 */
+export interface StructuredPromptOutput extends StructuredPromptValue {
+  /** 子代理的输出；未委托时为空串。 */
+  readonly delegated: string
+}
+
+/**
+ * 执行上下文（本工具只用到这两项）。
+ *
+ * `agent` 可选是有意的：非 agent 调用者没有可充当父级的 agent，此时 `delegate` 会被拒绝，
+ * 而"只构建提示词"仍然可用。
+ */
+export interface ToolRunContextLike {
+  /** 发起调用的 agent。 */
+  readonly agent?: unknown
+  /** 取消信号，会传给子代理运行。 */
+  readonly signal: AbortSignal
+}
+
+/** 本插件用到的调用卡片形状（`generic` 卡片的最小可用子集）。 */
+export interface ToolCallViewLike {
+  readonly card: 'generic'
+  /** 卡片标题：用本次构建的目标，比工具名更能说明在做什么。 */
+  readonly title: string
+  readonly kind: 'other'
+  readonly rawInput: unknown
 }
 
 /**
@@ -63,15 +79,24 @@ export interface ToolDefinitionLike {
      * @param value - canonical 值。
      * @returns 内容块。
      */
-    render(args: unknown, value: StructuredPromptValue): TextBlock[]
+    render(args: unknown, value: StructuredPromptOutput): TextBlock[]
   }
   /**
    * 执行一次调用。
    * @param args - 模型传入的参数。
-   * @param exec - 执行上下文（本工具不使用）。
+   * @param exec - 执行身份与取消信号；`delegate` 需要 `exec.agent` 作为父级。
    * @returns canonical 值。
    */
-  execute(args: unknown, exec: unknown): Promise<StructuredPromptValue>
+  execute(args: unknown, exec: ToolRunContextLike): Promise<StructuredPromptOutput>
+  /**
+   * 调用进行中的卡片。
+   *
+   * 必须**纯**且**容错**：界面在实时流与历史回放时都会调用它，参数可能是旧版本记录的
+   * 形状。读不到目标时回退到工具名即可。
+   * @param args - 解析后的调用参数（形状未经校验）。
+   * @returns 卡片意图。
+   */
+  presentCall?(args: unknown): ToolCallViewLike | undefined
 }
 
 /** 宿主侧上下文：本插件只消费工具注册面。 */
@@ -84,59 +109,15 @@ export interface HostPluginContext {
      */
     register(definition: ToolDefinitionLike): unknown
   }
-}
-
-/**
- * 纯构建：参数 → 表单 → 提示词。
- *
- * 与 `execute` 分开，让测试可以绕过参数校验直接验证映射规则。
- * @param raw - 已收窄的参数。
- * @returns canonical 值。
- */
-export function buildFromArgs(raw: NarrowedArgs): StructuredPromptValue {
-  const asString = (field: string): string | undefined => {
-    const value = raw[field]
-    return typeof value === 'string' ? value : undefined
-  }
-  const asArray = (field: string): string[] | undefined => {
-    const value = raw[field]
-    return Array.isArray(value) ? value : undefined
-  }
-
-  // 模板作为默认值，调用参数逐字段覆盖它。
-  const templateId = asString('template')
-  const chosen = templateId === undefined
-    ? undefined
-    : TEMPLATES.find(template => template.id === templateId)
-  const base = chosen === undefined ? completeForm({}) : chosen.build()
-
-  const callable = splitCallableTools(asArray('callable_tools') ?? [])
-  const format = prefer(asString('output_format') as OutputFormat | undefined, base.outputFormat)
-  const form: PromptForm = {
-    role: prefer(asString('role'), base.role),
-    goal: prefer(asString('goal'), base.goal),
-    background: prefer(asString('background'), base.background),
-    successCriteria: prefer(asString('success_criteria'), base.successCriteria),
-    rules: prefer(asArray('rules'), base.rules),
-    forbidden: prefer(asArray('forbidden'), base.forbidden),
-    toolPolicy: prefer(asString('tool_policy') as ToolPolicy | undefined, base.toolPolicy),
-    callableTools: callable.tools.length > 0 ? callable.tools : base.callableTools,
-    toolSlots: callable.tools.length > 0 ? callable.slots : base.toolSlots,
-    toolGuidance: prefer(asArray('tool_guidance'), base.toolGuidance),
-    toolFailure: prefer(asString('tool_failure'), base.toolFailure),
-    outputSpec: resolveOutputSpec(asString('output_spec'), format, base.outputSpec),
-    outputFormat: format,
-    languageTone: prefer(asString('language_tone'), base.languageTone),
-    fields: prefer(asArray('fields'), base.fields),
-    fallback: prefer(asString('fallback'), base.fallback),
-    examples: prefer(asString('examples'), base.examples),
-  }
-
-  return {
-    prompt: buildSystemPrompt(form),
-    template: chosen?.id ?? '',
-    missing: validateForm(form),
-  }
+  /**
+   * 可选读取一个服务。
+   *
+   * `subagents` 走这条路而不是写进 `inject`：没装配子代理 provider 的组装里，本插件仍要
+   * 能提供"只构建提示词"的能力 —— 把可选能力写成硬依赖会让整个插件在那些组装里不激活。
+   * @param name - 服务名。
+   * @returns 服务实例；缺失时为 `undefined`。
+   */
+  get?(name: string): unknown
 }
 
 /**
@@ -144,24 +125,77 @@ export function buildFromArgs(raw: NarrowedArgs): StructuredPromptValue {
  *
  * 单独导出（而不是在模块顶层直接构造）是为了让测试能拿到定义直接调用 `execute` /
  * `render`，无需启动一个 Cordis 上下文。
+ * @param ctx - host 侧插件上下文；省略时 `delegate` 会以"服务不可用"拒绝（其余能力不变）。
  * @returns registry-ready 的工具定义。
  */
-export function createStructuredPromptTool(): ToolDefinitionLike {
+export function createStructuredPromptTool(ctx?: HostPluginContext): ToolDefinitionLike {
   return {
     name: STRUCTURED_PROMPT_TOOL,
     description: TOOL_DESCRIPTION,
     parameters: TOOL_PARAMETERS_SCHEMA,
     output: {
       schema: TOOL_OUTPUT_SCHEMA,
-      render: (_args, value) => [{
-        type: 'text',
-        text: value.missing.length === 0
-          ? value.prompt
-          : `${value.prompt}\n\n---\n(Required field(s) still empty: ${value.missing.join(', ')}.)`,
-      }],
+      render: (_args, value) => {
+        if (value.delegated !== '') {
+          // 委托时提示词已投给子代理、不再回传（这正是这条路径省上下文的原因）。
+          return [{
+            type: 'text',
+            text: `Delegated to a subagent; the built prompt was not added to this context.\n\n---\n${value.delegated}`,
+          }]
+        }
+        return [{
+          type: 'text',
+          text: value.missing.length === 0
+            ? value.prompt
+            : `${value.prompt}\n\n---\n(Required field(s) still empty: ${value.missing.join(', ')}.)`,
+        }]
+      },
     },
-    execute(args) {
-      return Promise.resolve(buildFromArgs(narrowArgs(args)))
+    async execute(args, exec) {
+      const narrowed = narrowArgs(args)
+      const built = buildFromArgs(narrowed)
+      const delegate = narrowed.delegate
+      if (delegate === undefined) return { ...built, delegated: '' }
+
+      // 可选读取：没装配子代理 provider 的 profile 里，"只构建提示词"仍要可用。
+      const subagents = ctx?.get?.('subagents') as SubagentsServiceLike | undefined
+      if (subagents === undefined) {
+        throw new Error(
+          'cannot delegate: the "subagents" service is not available in this composition; '
+          + 'call without `delegate` to get the prompt instead',
+        )
+      }
+      if (exec.agent === undefined) {
+        throw new Error('cannot delegate: this call has no owning agent to act as the parent')
+      }
+      const providerName = resolveProviderName(subagents, delegate.provider)
+      const outcome = await runForeground(
+        subagents,
+        providerName,
+        built.prompt,
+        delegate.label ?? STRUCTURED_PROMPT_TOOL,
+        exec.agent,
+        exec.signal,
+      )
+      return { ...built, delegated: outcome.output }
+    },
+    /**
+     * 用本次构建的目标做标题 —— 比工具名更能说明"在构建什么"。
+     *
+     * 刻意**不提供** `presentResult`：结果是整段提示词，通用卡片会沿用这个标题并直接读
+     * durable 内容，再写一份 presentResult 只是把同一段大文本塞进视图载荷（DSH 的
+     * `run_code` 工具也是这个取舍）。
+     * @param args - 调用参数（形状未经校验，历史回放的参数可能与当前版本不同）。
+     * @returns 卡片意图。
+     */
+    presentCall(args) {
+      const goal = typeof args === 'object' && args !== null
+        ? (args as { goal?: unknown }).goal
+        : undefined
+      const title = typeof goal === 'string' && goal.trim() !== ''
+        ? goal.trim()
+        : STRUCTURED_PROMPT_TOOL
+      return { card: 'generic', title, kind: 'other', rawInput: args }
     },
   }
 }
@@ -172,5 +206,5 @@ export function createStructuredPromptTool(): ToolDefinitionLike {
  * @returns 服务的返回值（取消注册函数）。
  */
 export function registerStructuredPromptTool(ctx: HostPluginContext): unknown {
-  return ctx.tools.register(createStructuredPromptTool())
+  return ctx.tools.register(createStructuredPromptTool(ctx))
 }

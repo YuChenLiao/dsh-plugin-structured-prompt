@@ -36,8 +36,30 @@ export interface ToolArgs extends Record<string, unknown> {
   goal?: unknown
 }
 
-/** 收窄后的参数：两个必填项保证存在，其余按需。 */
-export type NarrowedArgs = { role: string; goal: string } & Record<string, string | string[] | undefined>
+/** 委托参数（`delegate`）：把构建好的提示词直接交给子代理执行，而不是返回给调用方。 */
+export interface DelegateArgs {
+  /** 子代理任务的短标签。 */
+  readonly label?: string
+  /** 指定的 provider 名；注册了多个候选时才需要。 */
+  readonly provider?: string
+}
+
+/**
+ * 收窄后的参数。
+ *
+ * 用接口而不是交叉类型：`delegate` 是对象，与「其余字段都是字符串或字符串数组」的索引
+ * 签名不能共存于交叉类型里，写成一个接口才能同时表达两者。
+ */
+export interface NarrowedArgs {
+  /** 身份（必填，已 trim）。 */
+  role: string
+  /** 目标（必填，已 trim）。 */
+  goal: string
+  /** 委托参数；未要求委托时缺省。 */
+  delegate?: DelegateArgs
+  /** 其余表单字段按需存在（构建时逐项写入，故这里不能声明为只读）。 */
+  [field: string]: string | string[] | DelegateArgs | undefined
+}
 
 /**
  * 把模型传入的参数收窄成可用形状。
@@ -75,11 +97,35 @@ export function narrowArgs(raw: unknown): NarrowedArgs {
       problems.push(`${field} must be one of: ${allowed.join(', ')}`)
     }
   }
+  // 委托参数：形状固定，只认声明的两个子字段（未知键在这里报错，而不是被静默忽略）。
+  const rawDelegate = args['delegate']
+  let delegate: DelegateArgs | undefined
+  if (rawDelegate !== undefined) {
+    if (typeof rawDelegate !== 'object' || rawDelegate === null || Array.isArray(rawDelegate)) {
+      problems.push('delegate must be an object')
+    } else {
+      const record = rawDelegate as Record<string, unknown>
+      for (const [key, value] of Object.entries(record)) {
+        if (key !== 'label' && key !== 'provider') {
+          problems.push(`delegate.${key} is not a supported field`)
+        } else if (typeof value !== 'string') {
+          problems.push(`delegate.${key} must be a string`)
+        }
+      }
+      const label = record['label']
+      const provider = record['provider']
+      delegate = {
+        ...(typeof label === 'string' ? { label } : {}),
+        ...(typeof provider === 'string' ? { provider } : {}),
+      }
+    }
+  }
   if (problems.length > 0) throw new Error(`invalid arguments: ${problems.join('; ')}`)
 
   const narrowed: NarrowedArgs = {
     role: (args.role as string).trim(),
     goal: (args.goal as string).trim(),
+    ...(delegate === undefined ? {} : { delegate }),
   }
   for (const field of STRING_FIELDS) {
     const value = args[field]

@@ -26,7 +26,7 @@ import { OutputSection } from './sections/OutputSection.js'
 import { RulesSection } from './sections/RulesSection.js'
 import { ToolsSection } from './sections/ToolsSection.js'
 import { parseFormDocument, serializeForm } from '../../shared/forms.js'
-import { buildSystemPrompt, validateForm } from '../../shared/prompt.js'
+import { buildSystemPromptSections, renderPrompt, validateForm } from '../../shared/prompt.js'
 import {
   COLORS,
   maskStyle,
@@ -70,7 +70,9 @@ export function StructuredPromptModal({
     if (noticeTimer.current !== null) clearTimeout(noticeTimer.current)
   }, [])
 
-  const prompt = buildSystemPrompt(form)
+  // 分段与全文只算一次：分段供预览显示逐段预算，全文供复制/发送。
+  const sections = buildSystemPromptSections(form)
+  const prompt = renderPrompt(sections)
   const missing = validateForm(form)
   const canSend = missing.length === 0 && prompt !== ''
 
@@ -200,7 +202,7 @@ export function StructuredPromptModal({
             )
           })}
 
-          <Preview prompt={prompt} />
+          <Preview prompt={prompt} sections={sections} />
         </div>
 
         <ModalFooter

@@ -32,6 +32,10 @@ export const TOOL_DESCRIPTION = [
   'optional — add `rules`, `forbidden`, `output_format`, `fallback` and so on when the',
   'child needs tighter constraints. `template` starts from a built-in template — its',
   'fields act as defaults and anything you pass overrides them.',
+  // 说清"什么时候不该用"：简单任务直接调 subagent 更省，否则模型会对每个委托都先构建一遍。
+  'Skip it for simple delegations — calling the subagent tool directly with a plain task is',
+  'cheaper. This tool earns its cost when the child needs several explicit constraints you',
+  'would otherwise have to spell out anyway.',
 ].join(' ')
 
 /**
@@ -120,6 +124,21 @@ export const TOOL_PARAMETERS_SCHEMA = {
       type: 'string',
       description: 'A short input/output example when the expected shape is easier to show than to describe.',
     },
+    delegate: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        label: {
+          type: 'string',
+          description: 'Short label for the delegation, shown in the child list.',
+        },
+        provider: {
+          type: 'string',
+          description: 'Subagent provider name. Only needed when more than one is registered.',
+        },
+      },
+      description: 'Run the built prompt as a foreground subagent instead of returning it. The prompt never enters your own context, which keeps long prompts cheap. Omit to just get the prompt back.',
+    },
   },
   required: ['role', 'goal'],
 }
@@ -136,6 +155,10 @@ export const TOOL_OUTPUT_SCHEMA = {
       items: { type: 'string' },
       description: 'Required fields still empty after completion (normally empty).',
     },
+    delegated: {
+      type: 'string',
+      description: 'The subagent\'s output when `delegate` was set; empty otherwise.',
+    },
   },
-  required: ['prompt', 'template', 'missing'],
+  required: ['prompt', 'template', 'missing', 'delegated'],
 }

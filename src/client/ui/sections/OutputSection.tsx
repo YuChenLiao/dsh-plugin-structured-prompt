@@ -12,7 +12,7 @@ import type { FormActions } from '../actions.js'
 import { ChipGroup, Field, TextArea, TextInput } from '../base.js'
 import { ListEditor } from '../ListEditor.js'
 import { LIST_FIELDS, OUTPUT_FORMAT_OPTIONS } from '../config.js'
-import { applyFormatChoice, formatSpecStatus } from '../../../shared/prompt.js'
+import { applyFormatChoice, formatSpecStatus } from '../../../shared/format.js'
 import { COLORS } from '../styles.js'
 
 /** 输出与兜底分组的 props。 */

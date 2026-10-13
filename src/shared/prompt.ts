@@ -7,7 +7,8 @@
  * 非空段落之间以单个空行连接，空段落整体省略；扩写字段都并入既有段落，没有
  * 新增顶层段落。
  */
-import type { OutputFormat, PromptForm } from './types.js'
+import { resolveSkeleton } from './format.js'
+import type { PromptForm } from './types.js'
 
 /** 把文本按行清洗：去掉行尾空白、折叠连续空行、去首尾空行。 */
 function normalizeBlock(text: string): string {
@@ -25,93 +26,12 @@ function cleanList(items: readonly string[]): string[] {
   return items.map(item => item.trim()).filter(item => item !== '')
 }
 
-/** 输出格式类型到 `outputSpec` 骨架的映射（用户可在表单里再改）。 */
-export const OUTPUT_FORMAT_SKELETONS: Record<Exclude<OutputFormat, ''>, string> = {
-  json: [
-    '以 JSON 输出，字段如下：',
-    '- field_name: type  // 说明',
-  ].join('\n'),
-  markdown: [
-    '以 Markdown 输出，结构如下：',
-    '## 结论',
-    '## 依据',
-    '## 后续动作',
-  ].join('\n'),
-  table: [
-    '以 Markdown 表格输出，列如下：',
-    '| 项 | 值 | 说明 |',
-    '| --- | --- | --- |',
-  ].join('\n'),
-  text: '以纯文本输出，先给结论，再给依据，不要使用 Markdown 标记。',
-}
-
 /**
- * 取某个格式类型的骨架。
+ * 输出格式的规则（骨架表、骨架解析、说明与格式类型的关系）在 `./format.js`。
  *
- * 用 `Object.hasOwn` 查表而不是直接下标取值：越界的格式类型（模型传了 schema 外的值、
- * 或旧表单里的历史值）下标取值会得到 `undefined`，被后续 `join` 折叠成空串，于是整个
- * 输出格式段静默少一段。查不到就明确返回空串，并由调用方决定是否拒绝该输入。
- * @param format - 格式类型。
- * @returns 骨架文本；空串或越界值返回空串。
+ * 这里再做一次导出，让既有调用方仍然可以从本模块取到骨架表。
  */
-export function resolveSkeleton(format: OutputFormat): string {
-  if (!Object.hasOwn(OUTPUT_FORMAT_SKELETONS, format)) return ''
-  return OUTPUT_FORMAT_SKELETONS[format as Exclude<OutputFormat, ''>]
-}
-
-/**
- * 「输出格式说明」与所选格式类型的关系。
- *
- * - `empty`：说明为空 —— 格式类型将生成骨架；
- * - `matches`：说明就是当前格式的骨架；
- * - `extends`：说明 = 当前格式骨架 + 追加内容；
- * - `detached`：说明与所选格式无关 —— **格式类型不生效**，说明才是最终契约。
- */
-export type FormatSpecStatus = 'empty' | 'matches' | 'extends' | 'detached'
-
-/**
- * 判断格式说明与格式类型的关系。
- *
- * 存在的意义是让界面能说出"格式类型已经被说明覆盖了"。没有这个提示时，用户改选格式
- * 类型后看到的是一段与选择不符的契约，而界面仍然高亮着新值 —— 两边静默分叉
- * （`applyFormatChoice` 只负责在切换时同步骨架，管不到"用户手写后再改选"的语义）。
- * @param spec - 格式说明。
- * @param format - 所选格式类型。
- * @returns 关系状态。
- */
-export function formatSpecStatus(spec: string, format: OutputFormat): FormatSpecStatus {
-  const trimmed = spec.trim()
-  if (trimmed === '') return 'empty'
-  const skeleton = resolveSkeleton(format)
-  // 没选格式（或越界值）：说明自成一格，不算"覆盖了格式类型"。
-  if (skeleton === '') return 'detached'
-  if (trimmed === skeleton) return 'matches'
-  if (trimmed.startsWith(skeleton)) return 'extends'
-  return 'detached'
-}
-
-/**
- * 按新选的格式类型更新「输出格式说明」。
- *
- * 客户端选格式时会把骨架写进说明字段供用户接着编辑，因此说明可能处于三种状态：
- *  - 空、或恰好是某套骨架：整段替换；
- *  - 在某套骨架基础上追加过内容：**只替换骨架部分**，保留追加的内容；
- *  - 完全手写：不动 —— 说明才是最终契约，此时格式类型不再影响产物。
- *
- * 中间那条是关键：早先"已被手写就完全不覆盖"的规则会让用户改选格式后，产物里仍是
- * 旧格式的契约（格式类型在 UI 上已高亮为新值），两边静默分叉。
- * @param current - 当前的格式说明。
- * @param format - 新选的格式类型；空串表示清除选择。
- * @returns 更新后的格式说明。
- */
-export function applyFormatChoice(current: string, format: OutputFormat): string {
-  const skeleton = resolveSkeleton(format)
-  if (skeleton === '') return current
-  const known: string[] = Object.values(OUTPUT_FORMAT_SKELETONS)
-  if (current.trim() === '' || known.includes(current)) return skeleton
-  const previous = known.find(item => current.startsWith(item))
-  return previous === undefined ? current : skeleton + current.slice(previous.length)
-}
+export { OUTPUT_FORMAT_SKELETONS } from './format.js'
 
 /** 工具调用策略为「自动」时的固定引导语。 */
 const TOOL_POLICY_AUTO = '由你根据任务需要自行判断并选择要调用的工具；不需要工具时直接回答。'
@@ -144,12 +64,35 @@ function manualPolicyText(tools: readonly string[], slots: readonly string[]): s
   ].join('\n')
 }
 
+/** 提示词的一个顶层段落。 */
+export interface PromptSection {
+  /** 段标题（`# ` 之后的部分）。 */
+  readonly title: string
+  /** 段正文，不含标题行。 */
+  readonly body: string
+}
+
 /**
- * 构建结构化系统提示词。
- * @param form - 表单字段。
- * @returns 组装后的提示词；身份与目标均为空时返回空串。
+ * 把分段结果拼成完整提示词。
+ *
+ * 与 {@link buildSystemPromptSections} 分开，是为了让调用方既能有整篇文本（发送、复制），
+ * 也能拿到逐段占用（预算提示），而不必把同一份计算做两遍。
+ * @param sections - 分段结果。
+ * @returns 提示词全文。
  */
-export function buildSystemPrompt(form: PromptForm): string {
+export function renderPrompt(sections: readonly PromptSection[]): string {
+  return sections.map(section => `# ${section.title}\n${section.body}`).join('\n\n')
+}
+
+/**
+ * 构建分段结果。
+ *
+ * 空段整体省略（`body === ''`），非空段之间以单个空行连接 —— 由 {@link renderPrompt}
+ * 负责连接，这里只负责"有哪些段、每段是什么"。
+ * @param form - 表单字段。
+ * @returns 段落列表；身份与目标均为空时返回空数组。
+ */
+export function buildSystemPromptSections(form: PromptForm): PromptSection[] {
   const rules = cleanList(form.rules)
   const forbidden = cleanList(form.forbidden)
   const guidance = cleanList(form.toolGuidance)
@@ -205,14 +148,23 @@ export function buildSystemPrompt(form: PromptForm): string {
   const examples = normalizeBlock(form.examples)
 
   return [
-    identity === '' ? '' : `# 身份\n${identity}`,
-    goal === '' ? '' : `# 目标\n${goal}`,
-    rulesBody === '' ? '' : `# 硬性规则（必须遵守，优先于其他任何要求）\n${rulesBody}`,
-    guidanceBody === '' ? '' : `# 工具使用策略\n${guidanceBody}`,
-    outputBody === '' ? '' : `# 输出格式\n${outputBody}`,
-    fallback === '' ? '' : `# 数据不足时\n${fallback}`,
-    examples === '' ? '' : `# 示例\n${examples}`,
-  ].filter(section => section !== '').join('\n\n')
+    { title: '身份', body: identity },
+    { title: '目标', body: goal },
+    { title: '硬性规则（必须遵守，优先于其他任何要求）', body: rulesBody },
+    { title: '工具使用策略', body: guidanceBody },
+    { title: '输出格式', body: outputBody },
+    { title: '数据不足时', body: fallback },
+    { title: '示例', body: examples },
+  ].filter(section => section.body !== '')
+}
+
+/**
+ * 构建结构化系统提示词。
+ * @param form - 表单字段。
+ * @returns 组装后的提示词；身份与目标均为空时返回空串。
+ */
+export function buildSystemPrompt(form: PromptForm): string {
+  return renderPrompt(buildSystemPromptSections(form))
 }
 
 /**

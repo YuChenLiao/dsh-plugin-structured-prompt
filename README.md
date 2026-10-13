@@ -28,7 +28,7 @@ dsh plugin --profile desktop add github:YuChenLiao/dsh-plugin-structured-prompt
   - **手动**：由你**直接填写**要允许调用的工具名（可加一行用途），提示词生成「只允许调用下列已指定的工具，其余工具一律不要使用」+ 逐行清单。工具名与用途按原始索引配对：用途可留空（只写工具名），工具名留空的行整体忽略。
   - 刻意**不提供**「从已安装清单里勾选」：DSH 的插件清单列的是自带插件而非用户安装的插件，skills 清单也不属于本插件的职责；工具检索在输入框的 `/` 菜单里。本插件因此**不读取任何主机数据**，`inject` 只有 `slots`。
 - **填完即走**：要么点「复制」把成稿拿去别处用，要么点「发送」直接投递进当前会话。没有中间态。
-- **实时预览**：表单底部可展开查看当前构建出的完整提示词与字数。
+- **实时预览与预算**：表单底部可展开查看完整提示词；折叠标题给出字数与**估算 token**，展开后列出**逐段占用**（哪一段最吃上下文），便于发送前判断会不会太长。token 是估算（CJK 每字 1、其余每 4 字符 1），只用于判断量级。
 - **模板与导入导出**：内置「告警研判（原始示例）、代码审查、数据提取、报告撰写」四套模板；表单可导出为 JSON、从 JSON 导入，便于跨会话复用。导出文档带 **schema 版本号**；导入时只接受已知字段并逐字段校验形状 —— 未知键、类型不符、越界枚举会被丢弃并在界面上说明，旧版无版本号的文件仍可读。
 - **跟随主题**：颜色与阴影全部走 DSH 主题 token（`--dsw-alias-*`、`--dsw-elevation-prominent`），深浅色主题自动切换。
 
@@ -83,6 +83,10 @@ host 半边注册一个工具 `build_structured_prompt`，让模型自己把模�
 模型 → build_structured_prompt({ role, goal, rules: [...], output_format: 'json' })
      → 返回构建好的提示词
      → 模型把它作为 subagent 工具的 prompt 参数（或写进文件、用在自己身上）
+
+模型 → build_structured_prompt({ role, goal, delegate: { label: 'review' } })
+     → 构建后**直接投给子代理**（前台运行、收集结果、释放运行）
+     → 提示词不进入主上下文，只回传子代理的输出
 ```
 
 | 项 | 说明 |
@@ -90,14 +94,18 @@ host 半边注册一个工具 `build_structured_prompt`，让模型自己把模�
 | 必填 | `role`（身份）、`goal`（目标）—— 与表单同一条规则 |
 | 可选 | 表单其余字段（`background` / `rules` / `forbidden` / `tool_policy` / `output_format` / `fallback` …） |
 | 模板 | `template` 可一键以内置模板为默认值，调用参数覆盖它 |
-| 返回 | `{ prompt, template, missing }`，模型看到的正文就是 `prompt` |
+| 直投 | `delegate: { label?, provider? }` 把提示词直接交给子代理执行，不进入本上下文 |
+| 返回 | `{ prompt, template, missing, delegated }`，模型看到的正文就是 `prompt`（或委托时的子代理输出） |
 
 几个刻意的取舍：
 
-- **只产出、不启动子代理**。工具返回文本，调用方自行决定用途（作为 `subagent.prompt`、写文件、自用）。因此本插件对子代理机制零耦合，也不需要关心 provider、前后台、深度限制。
+- **`delegate` 走可选服务，不进 `inject`**。`ctx.get('subagents')` 缺失时，`delegate` 报错并指出"不带它调用即可拿到提示词" —— 把可选能力写成硬依赖，会让本插件在没装配子代理 provider 的组装里**整个不激活**。
+- **provider 不用配置项**：只注册一个时自动用它；多个时要求 `delegate.provider` 显式指定，错误信息会列出候选；一个都没有则明确拒绝。
+- **前台 run 的收尾照官方实现**：结果与 `dispose()` 并行 settle，两者都失败时抛 `AggregateError`，避免清理失败掩盖真正的执行失败；非 `completed` 的终态一律算失败，但会带上诊断与部分输出。
 - **空串与空数组算「未给」**。用模板时传 `rules: []` 的意图是"没额外要求"，而不是"删掉模板的规则"。
 - **`callable_tools` 收一个数组**，每项写成 `工具名` 或 `工具名：用途`，由工具拆成表单那两个按索引配对的数组。
 - **选了 `output_format` 就补该格式骨架**，且只在本字段为空、或正文仍恰好是另一套骨架时覆盖 —— 与表单里点选格式的行为**逐字一致**（这条由测试直接断言两个入口产出相同）。
+- **调用卡片只提供 `presentCall`**（用本次目标作标题）。结果是整段提示词，再写 `presentResult` 只会把同一段大文本塞进视图载荷 —— DSH 的 `run_code` 工具也是这个取舍。
 
 > 一致性由 `tests/test-tool.mjs` 守住：同一组字段经工具与经表单产出必须**逐字相同**。将来若有人在工具里另写一套拼装，测试会失败。
 
@@ -232,12 +240,17 @@ node --import file:///D:/dsh/deepseek-harness/node_modules/tsx/dist/loader.mjs `
 ```text
 src/index.ts                   host 半边入口：注册模型可调用的工具
 src/host/
-  tool.ts                      工具定义（参数 → 表单 → 提示词）
-  parameters.ts                参数与输出 schema（纯数据）
+  tool.ts                      工具定义（schema + 行为 + 卡片）
+  build.ts                     纯构建：已收窄的参数 → 表单 → 提示词
+  args.ts                      参数收窄 / 校验 / 默认值回退
+  parameters.ts                参数与输出 schema（标准 JSON Schema）
+  subagents.ts                 直投子代理：provider 选择 + 前台 run 的收尾
 src/shared/                    两个半边共用的纯逻辑（无客户端/宿主依赖）
   types.ts                     共享类型（表单、状态、分组元数据）
-  forms.ts                     空白表单与片段补全
-  prompt.ts                    提示词构建核心（纯函数，段落顺序是契约）
+  forms.ts                     空白表单、片段补全、导出/导入的版本化文档
+  prompt.ts                    提示词分段与组装（段落顺序是契约）
+  format.ts                    输出格式语义：骨架表、切换、遮蔽判定
+  tokens.ts                    token 粗略估算（预算提示用）
   templates.ts                 内置模板库（填字段，不填成稿）
 src/client/
   index.ts                     客户端入口：槽位注册 + 样式注入（无 UI 实现）
