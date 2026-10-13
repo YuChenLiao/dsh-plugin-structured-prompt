@@ -126,6 +126,15 @@ function matchesShape(value: unknown, shape: string): boolean {
 }
 
 /**
+ * 是不是可以当字段容器用的普通对象。
+ * @param value - 待判断的值。
+ * @returns 对象、非 `null`、非数组时为 `true`。
+ */
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/**
  * 解析导入的表单文档。
  *
  * 接受两种输入：
@@ -169,6 +178,11 @@ export function parseFormDocument(text: string): ParsedForm {
       throw new Error('form 必须是对象')
     }
     source = inner as Record<string, unknown>
+  } else if (isPlainObject(record['form'])) {
+    // 手写成 `{form: {...}}` 却漏了 version：按那个对象解析，不要把内容整份丢掉 ——
+    // 丢掉之后调用方会拿空 patch 覆盖表单，把用户已填的内容清空。
+    warnings.push('缺少版本号：已按 form 字段的内容解析')
+    source = record['form']
   } else {
     warnings.push('这是没有版本号的旧导出文件，已按最初版本解析')
   }

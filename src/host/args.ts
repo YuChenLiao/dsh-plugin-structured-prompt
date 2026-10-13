@@ -43,7 +43,7 @@ export interface ToolArgs extends Record<string, unknown> {
 export interface DelegateArgs {
   /** 子代理任务的短标签。 */
   readonly label?: string
-  /** 指定的 provider 名；注册了多个候选时才需要。 */
+  /** 指定的 provider 名；通常省略（默认走一次性运行的 provider）。 */
   readonly provider?: string
 }
 

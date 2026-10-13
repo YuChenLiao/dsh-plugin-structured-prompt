@@ -377,11 +377,37 @@ check('output_format 空串被当作未给',
 check('tool_policy 空串被当作未给',
   (await run({ goal: 'g', tool_policy: '' })).prompt.includes('g'))
 
-// 结构性断言：host 侧不再维护第二份格式骨架逻辑（否则它会与客户端的
-// applyFormatChoice 各自演化 —— 上一轮的格式分叉就是同类根因）。
+// host 侧不再维护第二份格式骨架逻辑（否则它会与客户端的 applyFormatChoice 各自演化
+// —— 上一轮的格式分叉就是同类根因）。
+//
+// 只断言"某个函数名不存在"太弱：换个名字写回来照样通过。所以再加一条**行为**断言：
+// 同一组状态经 host 与经客户端路径必须产出逐字相同。
 const argsModule = await import(pathToFileURL(resolve(SRC, 'host', 'args.ts')).href)
-check('host 侧不再有独立的格式骨架实现',
-  argsModule.resolveOutputSpec === undefined)
+check('host 侧不再有独立的格式骨架实现', argsModule.resolveOutputSpec === undefined)
+
+const { applyFormatChoice } = await import(pathToFileURL(resolve(SRC, 'shared', 'format.ts')).href)
+const { buildFromArgs } = await import(pathToFileURL(resolve(SRC, 'host', 'build.ts')).href)
+const reportTemplate = TEMPLATES.find(item => item.id === 'report')
+const hostVsClient = (() => {
+  const fromHost = buildFromArgs(argsModule.narrowArgs({
+    role: 'r', goal: 'g', template: 'report', output_format: 'json',
+  })).prompt
+  const base = reportTemplate.build()
+  const fromClient = prompt.buildSystemPrompt(completeForm({
+    ...base,
+    role: 'r',
+    goal: 'g',
+    outputFormat: 'json',
+    // 客户端点选格式时走 applyFormatChoice 更新说明。
+    outputSpec: applyFormatChoice(base.outputSpec, 'json'),
+  }))
+  return { fromHost, fromClient }
+})()
+check('模板 + 指定另一套格式时两个入口逐字相同',
+  hostVsClient.fromHost === hostVsClient.fromClient,
+  hostVsClient.fromHost === hostVsClient.fromClient
+    ? ''
+    : `\n--- host ---\n${hostVsClient.fromHost}\n--- client ---\n${hostVsClient.fromClient}`)
 
 // delegate 的子字段也走参数校验
 check('delegate 的未知子字段被拒', (await rejectionOf(() => withService.execute(

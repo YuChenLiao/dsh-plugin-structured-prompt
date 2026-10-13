@@ -22,6 +22,8 @@ const SRC = resolve(HERE, '..', 'src', 'shared')
 const { buildSystemPrompt } = await import(pathToFileURL(resolve(SRC, 'prompt.ts')).href)
 const { completeForm } = await import(pathToFileURL(resolve(SRC, 'forms.ts')).href)
 const { TEMPLATES } = await import(pathToFileURL(resolve(SRC, 'templates.ts')).href)
+const { narrowArgs } = await import(pathToFileURL(resolve(HERE, '..', 'src', 'host', 'args.ts')).href)
+const { buildFromArgs } = await import(pathToFileURL(resolve(HERE, '..', 'src', 'host', 'build.ts')).href)
 const { CASES } = await import(pathToFileURL(join(GOLDEN_DIR, 'cases.mjs')).href)
 
 const update = process.argv.includes('--update')
@@ -46,6 +48,10 @@ function normalize(text) {
 
 /** 用例 → 提示词。 */
 function buildFor(testCase) {
+  // 工具路径：走 host 侧的参数收窄 + 构建，锁住那条路径的映射语义。
+  if (testCase.via === 'tool') {
+    return buildFromArgs(narrowArgs(testCase.args)).prompt
+  }
   const template = testCase.template === undefined
     ? undefined
     : TEMPLATES.find(item => item.id === testCase.template)

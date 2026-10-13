@@ -134,7 +134,7 @@ export const TOOL_PARAMETERS_SCHEMA = {
         },
         provider: {
           type: 'string',
-          description: 'Subagent provider name. Only needed when more than one is registered.',
+          description: 'Subagent provider name. Normally omit it: the default (a one-shot run) is used. Pass it only to deliberately delegate through another registered provider — e.g. one that inherits this conversation instead of working independently.',
         },
       },
       description: 'Run the built prompt as a foreground subagent instead of returning it. The prompt never enters your own context, which keeps long prompts cheap. Omit to just get the prompt back.',

@@ -114,14 +114,22 @@ check('缺 version 的正整数校验',
   && rejectionOf(JSON.stringify({ version: '1', form: {} })) !== null)
 check('form 不是对象被拒绝', rejectionOf(JSON.stringify({ version: 1, form: [] })) !== null)
 
-// `form` 这个键不能作为"版本化文档"的标志：用户手写 {form:{...}} 却忘写 version 时，
-// 旧判定会报出与内容无关的「version 必须是正整数」。
-const formNoVersion = parseFormDocument(JSON.stringify({ form: { role: 'r' } }))
-check('{form:...} 缺版本号时按裸表单解析（不报版本号错误）',
-  formNoVersion.warnings.some(item => item.includes('没有版本号')), formNoVersion.warnings.join('; '))
-check('{form:...} 里的内容被当作未知字段忽略',
-  formNoVersion.patch.role === undefined
-  && formNoVersion.warnings.some(item => item.includes('form')), formNoVersion.warnings.join('; '))
+// `form` 这个键不能作为"版本化文档"的独立标志：用户手写 {form:{...}} 却忘写 version 时，
+// 旧判定会报出与内容无关的「version 必须是正整数」。但也不能因此把内容整份丢掉 ——
+// 调用方拿到空 patch 会覆盖表单、把用户已填的内容清空。所以按 form 字段的内容解析并告警。
+const formNoVersion = parseFormDocument(JSON.stringify({ form: { role: 'r', goal: 'g' } }))
+check('{form:...} 缺版本号时按 form 字段的内容解析',
+  formNoVersion.warnings.some(item => item.includes('缺少版本号')), formNoVersion.warnings.join('; '))
+check('{form:...} 的内容被解析出来而不是丢弃',
+  formNoVersion.patch.role === 'r' && formNoVersion.patch.goal === 'g',
+  JSON.stringify(formNoVersion.patch))
+
+// 契约：根本无法识别的文件会得到空 patch —— 调用方必须据此拒绝导入。
+// （`setForm` 是整体替换，用空 patch 覆盖等于清空表单。）
+check('无法识别的文件得到空 patch',
+  Object.keys(parseFormDocument(JSON.stringify({ nope: 1 })).patch).length === 0)
+check('空 patch 不携带任何字段',
+  Object.keys(parseFormDocument(JSON.stringify({ form: 1 })).patch).length === 0)
 
 // ---- 6) 空白表单可往返（不能因为是空对象就出错） ----
 

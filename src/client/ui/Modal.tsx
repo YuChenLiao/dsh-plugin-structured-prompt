@@ -126,6 +126,12 @@ export function StructuredPromptModal({
     void file.text().then((text: string) => {
       try {
         const parsed = parseFormDocument(text)
+        // 空 patch 一律拒绝导入：`setForm` 是整体替换，拿一个空对象覆盖等于把用户已填
+        // 的内容清掉 —— 而"文件里没有可识别的字段"本就不该被视为一次成功的导入。
+        if (Object.keys(parsed.patch).length === 0) {
+          showNotice('failed', '文件里没有可识别的字段，表单未改动')
+          return
+        }
         actions.setForm(parsed.patch)
         if (parsed.warnings.length > 0) {
           // 部分内容被忽略时要说出来，否则"导入成功但字段没变"会让人以为是坏掉了。

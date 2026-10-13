@@ -7,14 +7,27 @@
  * 而手写断言只覆盖想得到的场景（上一轮的格式分叉就是这样漏掉的）。
  *
  * 用例形状：
- *   { id, note, template?, patch? }
- * 期望产物 = buildSystemPrompt(completeForm({ ...(template?.build() ?? {}), ...patch }))
+ *   { id, note }                        —— 走**表单**路径（默认）
+ *   { id, note, template?, patch? }      —— 走表单路径，template 作基底、patch 覆盖
+ *   { id, note, via: 'tool', args }      —— 走**工具**路径（host 侧 buildFromArgs）
+ *
+ * 两条路径都要有样本：只覆盖表单路径的话，host 侧的映射逻辑改动不会被任何契约样本
+ * 挡住（这正是复审指出的缺口）。
  *
  * 新增用例：在这里加一条，然后 `node tests/test-golden.mjs --update` 生成期望文件，
  * **打开生成的文件核对一遍**再提交。
  */
 
-/** @type {ReadonlyArray<{ id: string, note: string, template?: string, patch?: Record<string, unknown> }>} */
+/**
+ * @type {ReadonlyArray<{
+ *   id: string,
+ *   note: string,
+ *   template?: string,
+ *   patch?: Record<string, unknown>,
+ *   via?: 'tool',
+ *   args?: Record<string, unknown>,
+ * }>}
+ */
 export const CASES = [
   {
     id: 'minimal',
@@ -118,6 +131,41 @@ export const CASES = [
       forbidden: ['   '],
       toolPolicy: 'auto',
       fallback: '   ',
+    },
+  },
+  // 以下走**工具**路径（host 侧 buildFromArgs），锁住那条路径的映射语义。
+  {
+    id: 'tool-minimal',
+    note: '工具路径：只填两个必填项',
+    via: 'tool',
+    args: { role: '一名严谨的工程师', goal: '把这次改动写成一段说明。' },
+  },
+  {
+    id: 'tool-template-other-format',
+    note: '工具路径：模板 + 指定另一套格式（说明为空时按所选格式生成骨架）',
+    via: 'tool',
+    args: { role: '分析员', goal: '汇总数据。', template: 'report', output_format: 'json' },
+  },
+  {
+    id: 'tool-manual-tools',
+    note: '工具路径：手动策略 + 工具名与用途拆分',
+    via: 'tool',
+    args: {
+      role: '运维工程师',
+      goal: '重启服务。',
+      tool_policy: 'manual',
+      callable_tools: ['restart_service: 重启', '', 'read_log'],
+    },
+  },
+  {
+    id: 'tool-explicit-spec-wins',
+    note: '工具路径：显式给了格式说明时以它为准，格式类型不得改写它',
+    via: 'tool',
+    args: {
+      role: '分析员',
+      goal: '汇总数据。',
+      output_format: 'markdown',
+      output_spec: '以 TOML 输出，键为 summary。',
     },
   },
 ]

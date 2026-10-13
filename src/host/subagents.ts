@@ -104,8 +104,10 @@ export function resolveProviderName(
 ): string {
   // provider 名来自配置，先规范化再比较 —— 否则 "spawn " 会被判成未知。
   const names = subagents.list().map(name => name.trim()).filter(name => name !== '')
-  if (requested !== undefined) {
-    const wanted = requested.trim()
+  // 空串 / 纯空白按「未指定」处理，与参数边界的「空串算未给」保持一致 —— 否则模型对
+  // 可选字段填空串时会硬失败一次，而默认值本来就在那里等着。
+  const wanted = (requested ?? '').trim()
+  if (wanted !== '') {
     if (!names.includes(wanted)) {
       throw new Error(
         `unknown subagent provider "${wanted}"; available: ${names.join(', ') || '(none)'}`,
