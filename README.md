@@ -29,7 +29,7 @@ dsh plugin --profile desktop add github:YuChenLiao/dsh-plugin-structured-prompt
   - 刻意**不提供**「从已安装清单里勾选」：DSH 的插件清单列的是自带插件而非用户安装的插件，skills 清单也不属于本插件的职责；工具检索在输入框的 `/` 菜单里。本插件因此**不读取任何主机数据**，`inject` 只有 `slots`。
 - **填完即走**：要么点「复制」把成稿拿去别处用，要么点「发送」直接投递进当前会话。没有中间态。
 - **实时预览**：表单底部可展开查看当前构建出的完整提示词与字数。
-- **模板与导入导出**：内置「告警研判（原始示例）、代码审查、数据提取、报告撰写」四套模板；表单可导出为 JSON、从 JSON 导入，便于跨会话复用。
+- **模板与导入导出**：内置「告警研判（原始示例）、代码审查、数据提取、报告撰写」四套模板；表单可导出为 JSON、从 JSON 导入，便于跨会话复用。导出文档带 **schema 版本号**；导入时只接受已知字段并逐字段校验形状 —— 未知键、类型不符、越界枚举会被丢弃并在界面上说明，旧版无版本号的文件仍可读。
 - **跟随主题**：颜色与阴影全部走 DSH 主题 token（`--dsw-alias-*`、`--dsw-elevation-prominent`），深浅色主题自动切换。
 
 ## 表单项（18 项）
@@ -65,7 +65,9 @@ dsh plugin --profile desktop add github:YuChenLiao/dsh-plugin-structured-prompt
 「格式说明」是**自定义优先、否则由格式类型生成骨架**的二选一 —— 说明字段才是最终契约，
 格式类型只是帮它填骨架。选格式类型时 `applyFormatChoice` 会同步更新说明里的骨架部分：
 说明为空就整段填入；已在某套骨架基础上追加过内容就**只换骨架、保留追加**；完全手写的
-说明不动。这条规则由 `tests/test-prompt.mjs` 逐状态覆盖。
+说明不动。当说明与所选格式类型**完全无关**时（例如手写了一段 TOML 契约），界面会明确提示
+「格式类型已不生效」，避免高亮的格式类型与实际产物静默分叉。这条规则由
+`tests/test-prompt.mjs` 逐状态覆盖。
 
 ## 定位说明
 
@@ -190,7 +192,8 @@ node tools/setup-dev-links.mjs
 # 2) 构建产物 lib/index.js（host）与 lib/client.js（浏览器）
 node tools/lib/build.mjs
 
-# 3) 全部验证：类型检查 + 提示词行为 + 工具行为 + 注册契约 + 渲染结构 + 安装产物
+# 3) 全部验证（八套）：类型检查 + 提示词行为 + 黄金文件 + 文档契约
+#    + 注册契约 + 渲染结构 + 工具行为 + 安装产物
 node tools/run-tests.mjs
 ```
 
@@ -259,11 +262,13 @@ src/client/
       BasicSection.tsx  RulesSection.tsx  ToolsSection.tsx  OutputSection.tsx
 tools/
   lib/build.mjs                构建脚本（tsdown，两个半边）
-  lib/loader-hook.mjs          测试用重定向（react / dsh-tools / 依赖桩）+ .js→.ts 映射
+  lib/loader-hook.mjs          测试用重定向（react / react-dom / 依赖桩）+ .js→.ts 映射
   lib/store-stub.mjs           defineStore 的离线实现
   setup-dev-links.mjs          开发态依赖链接（.dev-deps/）
-  run-tests.mjs                六套验证的统一入口
-tests/                         test-prompt / test-tool / test-registration / test-render / verify-install
+  run-tests.mjs                八套验证的统一入口
+tests/                         test-prompt / test-golden / test-document / test-tool
+                               / test-registration / test-render / verify-install
+  golden/                      提示词格式的契约样本（cases.mjs + 每个用例的 .txt）
 ```
 
 `src/shared/` 是**两个半边的交汇点**：客户端表单与模型工具都调用同一份 `buildSystemPrompt`，
@@ -306,7 +311,7 @@ window.__ModuleLoader__.load({ id: 'dsh-plugin-structured-prompt', factory: requ
 ```text
 store.ts (状态) ──► ui/Panel.tsx ──► ui/Modal.tsx ──► ui/sections/* ──► ui/base.tsx
                         │                  │
-                        │                  └──► ui/ModalFooter.tsx（模板 / 导入导出 / 返回）
+                        │                  └──► ui/ModalFooter.tsx（模板 / 导入导出 / 复制发送）
                         └──► ui/Trigger.tsx（同一 store 的另一处只读/写）
 prompt.ts (纯函数) ◄── PromptForm ── ui/OutputSection.tsx（选格式时填骨架）
 ```

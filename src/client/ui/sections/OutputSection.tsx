@@ -3,7 +3,8 @@
  *
  * 选格式类型时会顺带更新格式说明里的骨架部分：说明为空就整段填入；已在某套骨架基础
  * 上追加过内容就只换骨架、保留追加；完全手写的说明不动（用户显式覆盖了格式类型）。
- * 规则本身在 `shared/prompt.ts` 的 `applyFormatChoice`（纯函数，便于测试）。
+ * 规则本身在 `shared/prompt.ts` 的 `applyFormatChoice`（纯函数，便于测试），并在说明
+ * 覆盖了格式类型时给出一句提示，避免"高亮的格式类型其实不生效"。
  */
 import type { ReactNode } from 'react'
 import type { OutputFormat, PromptForm } from '../../../shared/types.js'
@@ -11,7 +12,8 @@ import type { FormActions } from '../actions.js'
 import { ChipGroup, Field, TextArea, TextInput } from '../base.js'
 import { ListEditor } from '../ListEditor.js'
 import { LIST_FIELDS, OUTPUT_FORMAT_OPTIONS } from '../config.js'
-import { applyFormatChoice } from '../../../shared/prompt.js'
+import { applyFormatChoice, formatSpecStatus } from '../../../shared/prompt.js'
+import { COLORS } from '../styles.js'
 
 /** 输出与兜底分组的 props。 */
 export interface OutputSectionProps {
@@ -28,6 +30,9 @@ export interface OutputSectionProps {
  */
 export function OutputSection({ form, actions }: OutputSectionProps): ReactNode {
   const fields = LIST_FIELDS['fields']
+  // 仅当"选了格式类型"且"说明与它无关"时才提示；没选格式时说明自成一格，是正常用法。
+  const shadowed = form.outputFormat !== ''
+    && formatSpecStatus(form.outputSpec, form.outputFormat) === 'detached'
   /** 选择格式类型：同步更新说明里的骨架部分。 */
   const pickFormat = (value: OutputFormat): void => {
     actions.setField('outputFormat', value)
@@ -42,6 +47,14 @@ export function OutputSection({ form, actions }: OutputSectionProps): ReactNode 
           onPick={value => pickFormat(value as OutputFormat)}
         />
       </Field>
+      {shadowed ? (
+        <p
+          role="status"
+          style={{ margin: 0, fontSize: 12, color: COLORS.caption }}
+        >
+          格式类型已不生效：下面是手写的输出格式说明，它才是最终契约。
+        </p>
+      ) : null}
       <Field label="输出格式说明">
         <TextArea
           value={form.outputSpec}

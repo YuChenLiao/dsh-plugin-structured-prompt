@@ -244,6 +244,20 @@ const missingRequired = panel()
 check('必填未填时发送按钮禁用', missingRequired.html.includes('title="身份与目标为必填"'))
 instance.actions.setField('role', '身份示例')
 
+// 格式类型被手写说明覆盖时，界面必须说出来：否则用户改选格式后看到的是与选择不符的
+// 契约，而界面仍高亮着新值（子代理审查发现的静默分叉，修复后由这条断言守住）。
+if (instance.getSnapshot().collapsed.includes('output')) instance.actions.toggleSection('output')
+instance.actions.setField('outputFormat', 'json')
+instance.actions.setField('outputSpec', '以 TOML 输出，键为 summary。')
+const shadowedHtml = panel()
+check('格式类型被手写说明覆盖时给出提示',
+  shadowedHtml.html.includes('格式类型已不生效'))
+instance.actions.setField('outputSpec', '')
+const notShadowedHtml = panel()
+check('说明为空时不提示格式类型失效',
+  !notShadowedHtml.html.includes('格式类型已不生效'))
+instance.actions.setField('outputFormat', '')
+
 // 剪贴板降级：Node 里没有 navigator.clipboard，应走 execCommand 路径而不是抛错。
 const { copyText } = await import(pathToFileURL(resolve(CLIENT, 'ui', 'clipboard.ts')).href)
 check('空文本不写剪贴板', (await copyText('')) === false)

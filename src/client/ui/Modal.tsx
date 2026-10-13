@@ -17,6 +17,7 @@ import type { FormActions } from './actions.js'
 import { SmallButton } from './base.js'
 import { CollapsibleSection } from './CollapsibleSection.js'
 import { ModalFooter } from './ModalFooter.js'
+import type { Notice } from './ModalFooter.js'
 import { Preview } from './Preview.js'
 import { copyText } from './clipboard.js'
 import { SECTIONS } from './config.js'
@@ -24,6 +25,7 @@ import { BasicSection } from './sections/BasicSection.js'
 import { OutputSection } from './sections/OutputSection.js'
 import { RulesSection } from './sections/RulesSection.js'
 import { ToolsSection } from './sections/ToolsSection.js'
+import { parseFormDocument, serializeForm } from '../../shared/forms.js'
 import { buildSystemPrompt, validateForm } from '../../shared/prompt.js'
 import {
   COLORS,
@@ -34,7 +36,7 @@ import {
   rowStyle,
 } from './styles.js'
 
-/** 复制结果提示的展示时长（ms）。 */
+/** 提示的展示时长（ms）。 */
 const COPY_HINT_MS = 1800
 
 /** 弹窗的 props。 */
@@ -59,25 +61,34 @@ export interface StructuredPromptModalProps {
 export function StructuredPromptModal({
   form, collapsed, actions, onClose, onSend,
 }: StructuredPromptModalProps): ReactNode {
-  const [copyState, setCopyState] = useState<'ok' | 'failed' | null>(null)
+  const [notice, setNotice] = useState<Notice | null>(null)
   const importRef = useRef<HTMLInputElement>(null)
-  const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // 卸载时清掉未触发的提示定时器，避免在已卸载组件上 setState。
   useEffect(() => () => {
-    if (copyTimer.current !== null) clearTimeout(copyTimer.current)
+    if (noticeTimer.current !== null) clearTimeout(noticeTimer.current)
   }, [])
 
   const prompt = buildSystemPrompt(form)
   const missing = validateForm(form)
   const canSend = missing.length === 0 && prompt !== ''
 
+  /**
+   * 显示一次性提示。
+   * @param kind - 成功或失败。
+   * @param text - 提示文案。
+   */
+  const showNotice = (kind: Notice['kind'], text: string): void => {
+    setNotice({ kind, text })
+    if (noticeTimer.current !== null) clearTimeout(noticeTimer.current)
+    noticeTimer.current = setTimeout(() => setNotice(null), COPY_HINT_MS)
+  }
+
   /** 复制成稿到剪贴板，并短暂显示结果。 */
   const copyPrompt = (): void => {
     void copyText(prompt).then((ok) => {
-      setCopyState(ok ? 'ok' : 'failed')
-      if (copyTimer.current !== null) clearTimeout(copyTimer.current)
-      copyTimer.current = setTimeout(() => setCopyState(null), COPY_HINT_MS)
+      showNotice(ok ? 'ok' : 'failed', ok ? '已复制' : '复制失败')
     })
   }
 
@@ -88,10 +99,11 @@ export function StructuredPromptModal({
     onClose()
   }
 
-  /** 导出当前表单为 JSON，便于在别的会话复用。 */
+  /** 导出当前表单为 JSON 文档（含 schema 版本号），便于在别的会话复用。 */
   const exportForm = (): void => {
     try {
-      const blob = new Blob([JSON.stringify(form, null, 2)], { type: 'application/json' })
+      const text = JSON.stringify(serializeForm(form), null, 2)
+      const blob = new Blob([text], { type: 'application/json' })
       const url = URL.createObjectURL(blob)
       const anchor = document.createElement('a')
       anchor.href = url
@@ -100,6 +112,7 @@ export function StructuredPromptModal({
       URL.revokeObjectURL(url)
     } catch (error) {
       console.error('[structured-prompt] 导出表单失败：', error)
+      showNotice('failed', '导出失败')
     }
   }
 
@@ -109,9 +122,23 @@ export function StructuredPromptModal({
     event.target.value = ''
     if (file === undefined) return
     void file.text().then((text: string) => {
-      actions.setForm(JSON.parse(text) as Partial<PromptForm>)
+      try {
+        const parsed = parseFormDocument(text)
+        actions.setForm(parsed.patch)
+        if (parsed.warnings.length > 0) {
+          // 部分内容被忽略时要说出来，否则"导入成功但字段没变"会让人以为是坏掉了。
+          console.warn('[structured-prompt] 导入时忽略了部分内容：', parsed.warnings)
+          showNotice('ok', `已导入（忽略 ${parsed.warnings.length} 项）`)
+        } else {
+          showNotice('ok', '已导入')
+        }
+      } catch (error) {
+        console.error('[structured-prompt] 导入表单失败：', error)
+        showNotice('failed', `导入失败：${error instanceof Error ? error.message : String(error)}`)
+      }
     }).catch((error: unknown) => {
-      console.error('[structured-prompt] 导入表单失败：', error)
+      console.error('[structured-prompt] 读取文件失败：', error)
+      showNotice('failed', '读取文件失败')
     })
   }
 
@@ -183,7 +210,7 @@ export function StructuredPromptModal({
           importRef={importRef}
           onImportChange={importForm}
           onCopy={copyPrompt}
-          copyState={copyState}
+          notice={notice}
           onSend={send}
           canSend={canSend}
         />

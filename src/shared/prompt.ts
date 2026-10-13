@@ -60,6 +60,37 @@ export function resolveSkeleton(format: OutputFormat): string {
 }
 
 /**
+ * 「输出格式说明」与所选格式类型的关系。
+ *
+ * - `empty`：说明为空 —— 格式类型将生成骨架；
+ * - `matches`：说明就是当前格式的骨架；
+ * - `extends`：说明 = 当前格式骨架 + 追加内容；
+ * - `detached`：说明与所选格式无关 —— **格式类型不生效**，说明才是最终契约。
+ */
+export type FormatSpecStatus = 'empty' | 'matches' | 'extends' | 'detached'
+
+/**
+ * 判断格式说明与格式类型的关系。
+ *
+ * 存在的意义是让界面能说出"格式类型已经被说明覆盖了"。没有这个提示时，用户改选格式
+ * 类型后看到的是一段与选择不符的契约，而界面仍然高亮着新值 —— 两边静默分叉
+ * （`applyFormatChoice` 只负责在切换时同步骨架，管不到"用户手写后再改选"的语义）。
+ * @param spec - 格式说明。
+ * @param format - 所选格式类型。
+ * @returns 关系状态。
+ */
+export function formatSpecStatus(spec: string, format: OutputFormat): FormatSpecStatus {
+  const trimmed = spec.trim()
+  if (trimmed === '') return 'empty'
+  const skeleton = resolveSkeleton(format)
+  // 没选格式（或越界值）：说明自成一格，不算"覆盖了格式类型"。
+  if (skeleton === '') return 'detached'
+  if (trimmed === skeleton) return 'matches'
+  if (trimmed.startsWith(skeleton)) return 'extends'
+  return 'detached'
+}
+
+/**
  * 按新选的格式类型更新「输出格式说明」。
  *
  * 客户端选格式时会把骨架写进说明字段供用户接着编辑，因此说明可能处于三种状态：

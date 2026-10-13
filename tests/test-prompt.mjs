@@ -12,7 +12,9 @@ import { fileURLToPath } from 'node:url'
 
 const SHARED = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'shared')
 const prompt = await import(pathToFileURL(resolve(SHARED, 'prompt.ts')).href)
-const { buildSystemPrompt, validateForm, OUTPUT_FORMAT_SKELETONS, applyFormatChoice } = prompt
+const {
+  buildSystemPrompt, validateForm, OUTPUT_FORMAT_SKELETONS, applyFormatChoice, formatSpecStatus,
+} = prompt
 const { TEMPLATES, ALERT_TRIAGE_FIELDS } = await import(
   pathToFileURL(resolve(SHARED, 'templates.ts')).href
 )
@@ -161,6 +163,20 @@ check('清除格式选择时说明保持不变',
 // 5d) 越界的格式类型不得让输出格式段静默少内容（骨架取不到时不应拼出空块）。
 check('越界格式类型不产生空的输出格式段',
   !buildSystemPrompt(form({ outputFormat: 'csv', outputSpec: '' })).includes('# 输出格式'))
+
+// 5e) 说明与格式类型的关系判定 —— 界面据此说出"格式类型已被说明覆盖"。
+check('说明为空 → empty', formatSpecStatus('', 'json') === 'empty')
+check('说明就是骨架 → matches',
+  formatSpecStatus(OUTPUT_FORMAT_SKELETONS.json, 'json') === 'matches')
+check('说明 = 骨架 + 追加 → extends',
+  formatSpecStatus(`${OUTPUT_FORMAT_SKELETONS.json}\n- severity: "P0"`, 'json') === 'extends')
+check('说明与所选格式无关 → detached',
+  formatSpecStatus('以 TOML 输出', 'json') === 'detached')
+check('说明是「另一套」骨架 → detached（改选格式后就落到这里）',
+  formatSpecStatus(OUTPUT_FORMAT_SKELETONS.json, 'markdown') === 'detached')
+check('没选格式时说明自成一格（不算遮蔽）',
+  formatSpecStatus('以 TOML 输出', '') === 'detached'
+  && formatSpecStatus(OUTPUT_FORMAT_SKELETONS.json, '') === 'detached')
 
 // 6) 原始示例模板必须能复现「告警研判」示例的全部内容。
 const fromTemplate = buildSystemPrompt(form(ALERT_TRIAGE_FIELDS))

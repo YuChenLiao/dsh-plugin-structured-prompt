@@ -13,6 +13,14 @@ import { SmallButton } from './base.js'
 import { TEMPLATES } from '../../shared/templates.js'
 import { COLORS, buttonStyle, modalFootStyle, primaryButtonStyle, rowStyle } from './styles.js'
 
+/** 底部操作栏的一次性提示。 */
+export interface Notice {
+  /** `ok` 用次要文字色，`failed` 用错误色。 */
+  readonly kind: 'ok' | 'failed'
+  /** 提示文案。 */
+  readonly text: string
+}
+
 /** 底部操作栏的 props。 */
 export interface ModalFooterProps {
   /** store 动作（清空与模板填充）。 */
@@ -27,8 +35,8 @@ export interface ModalFooterProps {
   onImportChange: (event: ChangeEvent<HTMLInputElement>) => void
   /** 复制成稿到剪贴板。 */
   onCopy: () => void
-  /** 复制结果提示；未复制过时为 `null`。 */
-  copyState: 'ok' | 'failed' | null
+  /** 一次性提示（复制结果、导入结果）；无提示时为 `null`。 */
+  notice: Notice | null
   /** 把成稿投递进当前会话。 */
   onSend: () => void
   /** 成稿是否可用（身份与目标已填）。 */
@@ -41,7 +49,7 @@ export interface ModalFooterProps {
  * @returns 底部栏元素。
  */
 export function ModalFooter({
-  actions, onExport, onImportClick, importRef, onImportChange, onCopy, copyState, onSend, canSend,
+  actions, onExport, onImportClick, importRef, onImportChange, onCopy, notice, onSend, canSend,
 }: ModalFooterProps): ReactNode {
   return (
     <div style={modalFootStyle}>
@@ -60,7 +68,7 @@ export function ModalFooter({
           <option value="">模板…</option>
           {TEMPLATES.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}
         </select>
-        <SmallButton title="从 JSON 导入表单" onClick={onImportClick}>导入</SmallButton>
+        <SmallButton title="从 JSON 导入表单（也接受无版本号的旧导出文件）" onClick={onImportClick}>导入</SmallButton>
         <input
           ref={importRef}
           type="file"
@@ -68,17 +76,17 @@ export function ModalFooter({
           hidden
           onChange={onImportChange}
         />
-        <SmallButton title="导出当前表单为 JSON" onClick={onExport}>导出</SmallButton>
+        <SmallButton title="导出当前表单为 JSON（含 schema 版本号）" onClick={onExport}>导出</SmallButton>
         <SmallButton title="清空全部字段" onClick={() => actions.reset()}>清空</SmallButton>
       </div>
 
       <div style={{ ...rowStyle, flexWrap: 'wrap' }}>
-        {copyState === null ? null : (
+        {notice === null ? null : (
           <span
             role="status"
-            style={{ fontSize: 12, color: copyState === 'ok' ? COLORS.textSecondary : COLORS.danger }}
+            style={{ fontSize: 12, color: notice.kind === 'ok' ? COLORS.textSecondary : COLORS.danger }}
           >
-            {copyState === 'ok' ? '已复制' : '复制失败'}
+            {notice.text}
           </span>
         )}
         <SmallButton
