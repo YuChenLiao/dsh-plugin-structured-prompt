@@ -1,0 +1,6 @@
+# 黄金文件必须逐字稳定。
+#
+# `tests/golden/*.txt` 是提示词格式的契约样本，比对是**逐字**的，而构建器输出的换行
+# 是 LF。若 checkout 时被转成 CRLF（Windows 上 core.autocrlf=true 的默认行为），
+# 比对会失败 —— 不是代码问题，而是换行符问题，很难一眼看出。这里钉死为 LF。
+tests/golden/*.txt text eol=lf

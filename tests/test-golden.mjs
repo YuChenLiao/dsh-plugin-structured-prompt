@@ -32,6 +32,18 @@ const check = (label, ok, detail = '') => {
   if (!ok) failed += 1
 }
 
+/**
+ * 归一化换行符。
+ *
+ * 期望文件是 `.txt`，在 Windows 上 checkout 可能得到 CRLF（`.gitattributes` 已钉死
+ * 为 LF，这里再兜一层）。比对是逐字的，换行差异会造成"看着一样却失败"的困惑。
+ * @param text - 原始文本。
+ * @returns 换行统一为 LF 的文本。
+ */
+function normalize(text) {
+  return text.replace(/\r\n?/g, '\n')
+}
+
 /** 用例 → 提示词。 */
 function buildFor(testCase) {
   const template = testCase.template === undefined
@@ -49,7 +61,8 @@ console.log(`黄金用例 ${CASES.length} 条${update ? '（更新模式）' : '
 const expectedIds = new Set(CASES.map(item => `${item.id}.txt`))
 
 for (const testCase of CASES) {
-  const actual = buildFor(testCase)
+  // 归一化后再写/比：写出的文件与比对用同一条路径，避免"更新时写 CRLF、比对时按 LF"。
+  const actual = normalize(buildFor(testCase))
   const file = join(GOLDEN_DIR, `${testCase.id}.txt`)
 
   if (update) {
@@ -61,7 +74,7 @@ for (const testCase of CASES) {
     check(`${testCase.id}：期望文件存在`, false, `缺少 ${file}；用 --update 生成后核对`)
     continue
   }
-  const expected = readFileSync(file, 'utf8')
+  const expected = normalize(readFileSync(file, 'utf8'))
   check(`${testCase.id}：${testCase.note}`, actual === expected,
     actual === expected ? '' : `--- 期望 ---\n${expected}\n--- 实际 ---\n${actual}`)
 }
