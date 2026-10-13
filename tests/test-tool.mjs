@@ -254,15 +254,19 @@ check('输出 schema 含 delegated',
 check('不委托时 delegated 为空串',
   (await run({ goal: 'g' })).delegated === '')
 
-// provider 选择：不引入配置项，靠候选数量决定是否需要显式指定。
+// provider 选择：不引入配置项，靠"有默认值"而不是"多个候选就报错"。
+// DSH 的 base bundle 同时注册 spawn 与 fork，要求显式指定等于让功能开箱不可用。
 check('只有一个 provider 时自动选它', resolveProviderName(fakeSubagents(() => {}), undefined) === 'only')
 check('显式指定可用 provider',
   resolveProviderName(fakeSubagents(() => {}), 'only') === 'only')
-const manyError = await rejectionOf(async () => {
-  resolveProviderName({ ...fakeSubagents(() => {}), list: () => ['a', 'b'] }, undefined)
-})
-check('多个 provider 且未指定时报错并列出候选',
-  manyError !== null && manyError.message.includes('a, b'), String(manyError?.message))
+check('多个 provider 时默认选 spawn',
+  resolveProviderName({ ...fakeSubagents(() => {}), list: () => ['fork', 'spawn'] }, undefined) === 'spawn')
+check('没有 spawn 时取第一个',
+  resolveProviderName({ ...fakeSubagents(() => {}), list: () => ['fork', 'acp'] }, undefined) === 'fork')
+check('provider 名先 trim 再比较',
+  resolveProviderName({ ...fakeSubagents(() => {}), list: () => ['spawn '] }, undefined) === 'spawn')
+check('显式指定时也 trim',
+  resolveProviderName(fakeSubagents(() => {}), ' only ') === 'only')
 const noneError = await rejectionOf(async () => {
   resolveProviderName({ ...fakeSubagents(() => {}), list: () => [] }, undefined)
 })
@@ -335,6 +339,49 @@ const delegatedRender = withService.output.render(null, delegated)
 check('委托时 render 说明提示词未进入本上下文',
   delegatedRender[0].text.includes('not added to this context')
   && delegatedRender[0].text.includes('child output'))
+check('delegation 标记含 provider / 子会话 / 终态',
+  delegated.delegation.includes('only/'), delegated.delegation)
+check('未委托时 delegation 为空串', (await run({ goal: 'g' })).delegation === '')
+
+// 子代理**正常完成但没有文本输出**（只调用了工具）：delegated 合法地为空串，
+// 此时必须靠 delegation 区分"静默的子代理"与"根本没委托" —— 否则会回退成未委托分支，
+// 把整段提示词灌回本上下文，正好违背 delegate 的承诺。
+const silentTool = toolModule.createStructuredPromptTool({
+  tools: { register: () => () => {} },
+  get: name => (name === 'subagents'
+    ? fakeSubagents(() => fakeRun('child-silent', {
+      output: [{ type: 'image', attachment: {} }],
+      stopReason: 'completed',
+    }, () => {}))
+    : undefined),
+})
+const silent = await silentTool.execute(
+  { role: '审查员', goal: '审查本次改动', delegate: {} },
+  { signal: new AbortController().signal, agent: { id: 'agent' } },
+)
+check('子代理无文本输出时 delegated 为空串', silent.delegated === '')
+check('但 delegation 非空', silent.delegation !== '', silent.delegation)
+const silentRender = silentTool.output.render(null, silent)[0].text
+check('render 仍走委托分支', silentRender.includes('Delegated to a subagent'))
+check('render 不把提示词灌回上下文', !silentRender.includes('审查本次改动'))
+check('render 说明子代理没有文本输出', silentRender.includes('no text output'))
+
+// 未知模板 id 必须报错：静默降级成空白底座会产出一份短得多的提示词而无人察觉。
+check('未知 template 被拒（拼错时不再静默降级）',
+  (await rejectionOf(() => run({ goal: 'g', template: 'code-reviw' }))) !== null)
+check('合法 template 被接受', (await run({ goal: 'g', template: 'code-review' })).template === 'code-review')
+
+// 空串算「未给」，与 prefer 的约定一致（模型用它表达"不指定格式"时不该失败）。
+check('output_format 空串被当作未给',
+  (await run({ goal: 'g', output_format: '' })).prompt.includes('g'))
+check('tool_policy 空串被当作未给',
+  (await run({ goal: 'g', tool_policy: '' })).prompt.includes('g'))
+
+// 结构性断言：host 侧不再维护第二份格式骨架逻辑（否则它会与客户端的
+// applyFormatChoice 各自演化 —— 上一轮的格式分叉就是同类根因）。
+const argsModule = await import(pathToFileURL(resolve(SRC, 'host', 'args.ts')).href)
+check('host 侧不再有独立的格式骨架实现',
+  argsModule.resolveOutputSpec === undefined)
 
 // delegate 的子字段也走参数校验
 check('delegate 的未知子字段被拒', (await rejectionOf(() => withService.execute(

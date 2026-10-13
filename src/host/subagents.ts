@@ -18,6 +18,14 @@ export interface TextBlockLike {
   readonly text: string
 }
 
+/**
+ * 首选 provider 名。
+ *
+ * 一次性的独立子代理，与"把任务交出去执行"的语义一致。DSH 的 base bundle 注册的
+ * `spawn` 正是它；另一个候选 `fork` 会继承父会话上下文，用途不同。
+ */
+const PREFERRED_PROVIDER = 'spawn'
+
 /** 子代理的终态结果。 */
 export interface SubagentResultLike {
   readonly output: readonly unknown[]
@@ -68,6 +76,8 @@ export interface SubagentsServiceLike {
 
 /** 一次委托的结果。 */
 export interface DelegationOutcome {
+  /** 实际使用的 provider 名。 */
+  readonly provider: string
   /** 子会话 id。 */
   readonly runId: string
   /** 子代理的文本输出（拼接）。 */
@@ -86,31 +96,31 @@ export interface DelegationOutcome {
  * @param subagents - 子代理服务。
  * @param requested - 调用方指定的 provider 名（可选）。
  * @returns 生效的 provider 名。
- * @throws {Error} 未注册任何 provider、或指定了不存在的名字、或多个候选而未指定时。
+ * @throws {Error} 未注册任何 provider、或指定了不存在的名字时。
  */
 export function resolveProviderName(
   subagents: SubagentsServiceLike,
   requested: string | undefined,
 ): string {
-  const names = subagents.list()
+  // provider 名来自配置，先规范化再比较 —— 否则 "spawn " 会被判成未知。
+  const names = subagents.list().map(name => name.trim()).filter(name => name !== '')
   if (requested !== undefined) {
-    if (!names.includes(requested)) {
+    const wanted = requested.trim()
+    if (!names.includes(wanted)) {
       throw new Error(
-        `unknown subagent provider "${requested}"; available: ${names.join(', ') || '(none)'}`,
+        `unknown subagent provider "${wanted}"; available: ${names.join(', ') || '(none)'}`,
       )
     }
-    return requested
+    return wanted
   }
-  const [only] = names
-  if (only === undefined) {
+  const [first] = names
+  if (first === undefined) {
     throw new Error('no subagent provider is registered in this composition; cannot delegate')
   }
-  if (names.length > 1) {
-    throw new Error(
-      `several subagent providers are registered (${names.join(', ')}); pass "provider" to choose one`,
-    )
-  }
-  return only
+  // 有默认值，而不是"多个候选就报错"：DSH 的 base bundle 同时注册 `spawn` 与 `fork`
+  // （`packages/bundle/base/cordis.patch.yml`），要求调用方显式指定等于让这个功能开箱
+  // 不可用；而 `fork` 会继承父会话上下文，与"把任务独立交出去"的语义相反，不适合作默认。
+  return names.includes(PREFERRED_PROVIDER) ? PREFERRED_PROVIDER : first
 }
 
 /**
@@ -158,8 +168,9 @@ function textOf(blocks: readonly unknown[]): string {
  * @param result - 终态结果。
  * @returns 委托结果。
  */
-function toOutcome(runId: string, result: SubagentResultLike): DelegationOutcome {
+function toOutcome(provider: string, runId: string, result: SubagentResultLike): DelegationOutcome {
   return {
+    provider,
     runId,
     output: textOf(result.output),
     stopReason: result.stopReason,
@@ -196,8 +207,8 @@ export async function runForeground(
   const [execution] = await Promise.allSettled([
     run.result.then((result) => {
       const failure = stopReasonError(result.stopReason)
-      if (failure === undefined) return toOutcome(run.id, result)
-      const outcome = toOutcome(run.id, result)
+      if (failure === undefined) return toOutcome(providerName, run.id, result)
+      const outcome = toOutcome(providerName, run.id, result)
       const diagnostic = outcome.diagnostic === undefined ? '' : `\nDiagnostic: ${outcome.diagnostic}`
       const partial = outcome.output === '' ? '' : `\nPartial output before the run ended:\n${outcome.output}`
       throw new Error(`${failure}${diagnostic}${partial}`)

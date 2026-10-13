@@ -154,7 +154,9 @@ export function parseFormDocument(text: string): ParsedForm {
   const record = raw as Record<string, unknown>
   let source: Record<string, unknown> = record
 
-  if ('version' in record || 'form' in record) {
+  // 只用 `version` 判定版本化文档：`form` 这个键本身不能作为标志 —— 用户手写
+  // `{form: {...}}` 却忘写 version 时会被判成"缺少版本号"，报出与内容无关的错误。
+  if ('version' in record) {
     const version = record['version']
     if (typeof version !== 'number' || !Number.isInteger(version) || version < 1) {
       throw new Error('version 必须是正整数')

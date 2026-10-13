@@ -89,8 +89,12 @@ export function formatSpecStatus(spec: string, format: OutputFormat): FormatSpec
 export function applyFormatChoice(current: string, format: OutputFormat): string {
   const skeleton = resolveSkeleton(format)
   if (skeleton === '') return current
+  // 比较前统一归一：说明可能带首尾空白，用原值比较会让"仍是某套骨架"命中不了 ——
+  // 于是改选格式后说明留在旧格式上，而 formatSpecStatus 又按 trim 判定成 detached，
+  // 界面把"替换逻辑自己没命中"误报成"用户手写了契约"。
+  const trimmed = current.trim()
   const known: string[] = Object.values(OUTPUT_FORMAT_SKELETONS)
-  if (current.trim() === '' || known.includes(current)) return skeleton
-  const previous = known.find(item => current.startsWith(item))
-  return previous === undefined ? current : skeleton + current.slice(previous.length)
+  if (trimmed === '' || known.includes(trimmed)) return skeleton
+  const previous = known.find(item => trimmed.startsWith(item))
+  return previous === undefined ? current : skeleton + trimmed.slice(previous.length)
 }

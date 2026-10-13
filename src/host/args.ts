@@ -7,8 +7,8 @@
  * `parameters.ts`），因此不能借 `defineTool` 做参数校验，逐字段检查由 `narrowArgs`
  * 代劳。不合规就**报错**而不是静默丢弃 —— 失败说明会回到模型手里，它能据此改正。
  */
-import { OUTPUT_FORMAT_SKELETONS } from '../shared/prompt.js'
-import type { OutputFormat } from '../shared/types.js'
+import { OUTPUT_FORMAT_SKELETONS } from '../shared/format.js'
+import { TEMPLATES } from '../shared/templates.js'
 
 /** 需要按「字符串数组」读取的字段名。 */
 export const ARRAY_FIELDS = ['rules', 'forbidden', 'callable_tools', 'tool_guidance', 'fields'] as const
@@ -28,6 +28,9 @@ export const STRING_FIELDS = [
 const ENUM_FIELDS: Record<string, readonly string[]> = {
   output_format: Object.keys(OUTPUT_FORMAT_SKELETONS),
   tool_policy: ['auto', 'manual'],
+  // 模板 id 也走枚举校验：未知 id 会被静默当成"没传模板"，产出一份短得多的提示词，
+  // 而调用方与用户都看不出模板内容已经全丢。
+  template: TEMPLATES.map(template => template.id),
 }
 
 /** 模型传入的参数（键全部可选；`role` / `goal` 由校验强制）。 */
@@ -90,9 +93,13 @@ export function narrowArgs(raw: unknown): NarrowedArgs {
     }
   }
   // 枚举校验：越界值必须报错，不能让它带着 schema 外的取值进入构建流程。
+  //
+  // 空串按「未给」跳过，与 `prefer` 的约定一致 —— 否则模型用空串表达"不指定格式"时
+  // 会白白失败一次，而其它字符串字段的空串都是合法的。
   for (const [field, allowed] of Object.entries(ENUM_FIELDS)) {
     const value = args[field]
     if (value === undefined) continue
+    if (typeof value === 'string' && value.trim() === '') continue
     if (typeof value !== 'string' || !allowed.includes(value)) {
       problems.push(`${field} must be one of: ${allowed.join(', ')}`)
     }
@@ -178,25 +185,3 @@ export function splitCallableTools(entries: readonly string[]): { tools: string[
   return { tools, slots }
 }
 
-/**
- * 解析输出格式说明，语义与客户端 `OutputSection.pickFormat` 一致：选了格式就补上该
- * 格式骨架，但**只在本字段为空、或正文仍恰好是另一套骨架**时覆盖 —— 手写过的内容
- * 不会被冲掉。两个入口行为一致，才不会出现"表单里选 json 有骨架、工具里选 json 没
- * 骨架"的偏差。
- * @param providedSpec - 模型传入的格式说明。
- * @param format - 生效的输出格式。
- * @param baseSpec - 模板/空白表单的格式说明。
- * @returns 生效的格式说明。
- */
-export function resolveOutputSpec(
-  providedSpec: string | undefined,
-  format: OutputFormat,
-  baseSpec: string,
-): string {
-  const provided = providedSpec !== undefined && providedSpec.trim() !== ''
-  const current = provided ? providedSpec : baseSpec
-  if (provided || format === '') return current
-  const known: string[] = Object.values(OUTPUT_FORMAT_SKELETONS)
-  if (current.trim() !== '' && !known.includes(current)) return current
-  return OUTPUT_FORMAT_SKELETONS[format]
-}

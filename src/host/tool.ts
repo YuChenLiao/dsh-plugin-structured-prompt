@@ -33,6 +33,13 @@ export interface TextBlock {
 export interface StructuredPromptOutput extends StructuredPromptValue {
   /** 子代理的输出；未委托时为空串。 */
   readonly delegated: string
+  /**
+   * 委托标记：`provider/子会话 (终态)`；未委托时为空串。
+   *
+   * 必须有它而不是只看 `delegated`：子代理可能正常完成却**没有文本输出**（只调用了
+   * 工具），那时 `delegated` 合法地为空串，只看它就分不清"静默的子代理"与"没委托"。
+   */
+  readonly delegation: string
 }
 
 /**
@@ -136,11 +143,16 @@ export function createStructuredPromptTool(ctx?: HostPluginContext): ToolDefinit
     output: {
       schema: TOOL_OUTPUT_SCHEMA,
       render: (_args, value) => {
-        if (value.delegated !== '') {
-          // 委托时提示词已投给子代理、不再回传（这正是这条路径省上下文的原因）。
+        // 判定依据是**是否委托**，不是"输出是否为空"：子代理可能正常完成却没有文本
+        // 输出（只调用了工具），那时回退到"未委托"分支会把整段提示词灌回本上下文，
+        // 而 `delegate` 的承诺恰恰是它不进来。
+        if (value.delegation !== '') {
+          const body = value.delegated === ''
+            ? '(the subagent produced no text output)'
+            : value.delegated
           return [{
             type: 'text',
-            text: `Delegated to a subagent; the built prompt was not added to this context.\n\n---\n${value.delegated}`,
+            text: `Delegated to a subagent (${value.delegation}); the built prompt was not added to this context.\n\n---\n${body}`,
           }]
         }
         return [{
@@ -155,7 +167,7 @@ export function createStructuredPromptTool(ctx?: HostPluginContext): ToolDefinit
       const narrowed = narrowArgs(args)
       const built = buildFromArgs(narrowed)
       const delegate = narrowed.delegate
-      if (delegate === undefined) return { ...built, delegated: '' }
+      if (delegate === undefined) return { ...built, delegated: '', delegation: '' }
 
       // 可选读取：没装配子代理 provider 的 profile 里，"只构建提示词"仍要可用。
       const subagents = ctx?.get?.('subagents') as SubagentsServiceLike | undefined
@@ -177,7 +189,11 @@ export function createStructuredPromptTool(ctx?: HostPluginContext): ToolDefinit
         exec.agent,
         exec.signal,
       )
-      return { ...built, delegated: outcome.output }
+      return {
+        ...built,
+        delegated: outcome.output,
+        delegation: `${outcome.provider}/${outcome.runId} (${outcome.stopReason})`,
+      }
     },
     /**
      * 用本次构建的目标做标题 —— 比工具名更能说明"在构建什么"。

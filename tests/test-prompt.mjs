@@ -163,6 +163,15 @@ check('完全手写的说明不被覆盖',
 check('清除格式选择时说明保持不变',
   applyFormatChoice(OUTPUT_FORMAT_SKELETONS.json, '') === OUTPUT_FORMAT_SKELETONS.json)
 
+// 说明带首尾空白时也要能识别出"仍是某套骨架"：用未 trim 的值比较会让替换不命中，
+// 说明留在旧格式上，而 formatSpecStatus 又按 trim 判定成 detached —— 界面把
+// "替换逻辑没命中"误报成"用户手写了契约"。
+check('说明带首尾空白时仍能替换骨架',
+  applyFormatChoice(`  ${OUTPUT_FORMAT_SKELETONS.json}  `, 'markdown') === OUTPUT_FORMAT_SKELETONS.markdown)
+check('说明 = 带空白的骨架 + 追加时保留追加',
+  applyFormatChoice(`  ${OUTPUT_FORMAT_SKELETONS.json}\n- extra`, 'markdown')
+    === `${OUTPUT_FORMAT_SKELETONS.markdown}\n- extra`)
+
 // 5d) 越界的格式类型不得让输出格式段静默少内容（骨架取不到时不应拼出空块）。
 check('越界格式类型不产生空的输出格式段',
   !buildSystemPrompt(form({ outputFormat: 'csv', outputSpec: '' })).includes('# 输出格式'))

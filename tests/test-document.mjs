@@ -114,6 +114,15 @@ check('缺 version 的正整数校验',
   && rejectionOf(JSON.stringify({ version: '1', form: {} })) !== null)
 check('form 不是对象被拒绝', rejectionOf(JSON.stringify({ version: 1, form: [] })) !== null)
 
+// `form` 这个键不能作为"版本化文档"的标志：用户手写 {form:{...}} 却忘写 version 时，
+// 旧判定会报出与内容无关的「version 必须是正整数」。
+const formNoVersion = parseFormDocument(JSON.stringify({ form: { role: 'r' } }))
+check('{form:...} 缺版本号时按裸表单解析（不报版本号错误）',
+  formNoVersion.warnings.some(item => item.includes('没有版本号')), formNoVersion.warnings.join('; '))
+check('{form:...} 里的内容被当作未知字段忽略',
+  formNoVersion.patch.role === undefined
+  && formNoVersion.warnings.some(item => item.includes('form')), formNoVersion.warnings.join('; '))
+
 // ---- 6) 空白表单可往返（不能因为是空对象就出错） ----
 
 const emptyDoc = parseFormDocument(JSON.stringify(serializeForm(createEmptyForm())))

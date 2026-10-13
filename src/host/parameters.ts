@@ -159,6 +159,10 @@ export const TOOL_OUTPUT_SCHEMA = {
       type: 'string',
       description: 'The subagent\'s output when `delegate` was set; empty otherwise.',
     },
+    delegation: {
+      type: 'string',
+      description: 'Non-empty when the prompt was actually delegated, e.g. "spawn/child-1 (completed)". Distinguishes a silent subagent (completed but produced no text) from no delegation at all.',
+    },
   },
-  required: ['prompt', 'template', 'missing', 'delegated'],
+  required: ['prompt', 'template', 'missing', 'delegated', 'delegation'],
 }
