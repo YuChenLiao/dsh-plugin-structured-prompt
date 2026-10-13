@@ -2,7 +2,7 @@
 
 把 DSH 输入框切换成**结构化提示词表单**的插件。
 
-在输入框底部的「结构化输入任务」，点开即弹出结构化提示词表单。填完后可以一键把构建好的提示词同步回输入框，再照常编辑、发送。
+在输入框底部的「结构化输入任务」，点开即弹出结构化提示词表单。填完后可以点「复制」把成稿取走，或点「发送」把它作为普通用户消息直接投递进当前会话 —— 没有「同步回输入框再编辑」这一步。
 
 ```powershell
 dsh plugin --profile desktop add github:YuChenLiao/dsh-plugin-structured-prompt
@@ -32,7 +32,7 @@ dsh plugin --profile desktop add github:YuChenLiao/dsh-plugin-structured-prompt
 - **模板与导入导出**：内置「告警研判（原始示例）、代码审查、数据提取、报告撰写」四套模板；表单可导出为 JSON、从 JSON 导入，便于跨会话复用。导出文档带 **schema 版本号**；导入时只接受已知字段并逐字段校验形状 —— 未知键、类型不符、越界枚举会被丢弃并在界面上说明，旧版无版本号的文件仍可读。
 - **跟随主题**：颜色与阴影全部走 DSH 主题 token（`--dsw-alias-*`、`--dsw-elevation-prominent`），深浅色主题自动切换。
 
-## 表单项（18 项）
+## 表单项（17 项）
 
 | 组 | 字段 | 必填 |
 | --- | --- | --- |
@@ -95,16 +95,16 @@ host 半边注册一个工具 `build_structured_prompt`，让模型自己把模�
 | 可选 | 表单其余字段（`background` / `rules` / `forbidden` / `tool_policy` / `output_format` / `fallback` …） |
 | 模板 | `template` 可一键以内置模板为默认值，调用参数覆盖它 |
 | 直投 | `delegate: { label?, provider? }` 把提示词直接交给子代理执行，不进入本上下文 |
-| 返回 | `{ prompt, template, missing, delegated }`，模型看到的正文就是 `prompt`（或委托时的子代理输出） |
+| 返回 | `{ prompt, template, missing, delegated, delegation }`，模型看到的正文就是 `prompt`（或委托时的子代理输出）。`delegation` 非空表示**确实发生了委托**（形如 `spawn/child-1 (completed)`），未委托时为空串 —— 子代理正常完成但没有文本输出时 `delegated` 合法为空串，只能靠它区分「静默的子代理」与「没委托」 |
 
 几个刻意的取舍：
 
 - **`delegate` 走可选服务，不进 `inject`**。`ctx.get('subagents')` 缺失时，`delegate` 报错并指出"不带它调用即可拿到提示词" —— 把可选能力写成硬依赖，会让本插件在没装配子代理 provider 的组装里**整个不激活**。
-- **provider 不用配置项**：只注册一个时自动用它；多个时要求 `delegate.provider` 显式指定，错误信息会列出候选；一个都没有则明确拒绝。
+- **provider 不用配置项**：只注册一个时自动用它；多个时默认用 `spawn`（存在时），否则取第一个 —— DSH 的 base bundle 同时注册 `spawn` 与 `fork`，要求显式指定等于让功能开箱不可用，而 `fork` 会继承父会话上下文、语义与「独立委托」相反；只有显式传了未注册的名字才报错并列出候选；一个都没有则明确拒绝。
 - **前台 run 的收尾照官方实现**：结果与 `dispose()` 并行 settle，两者都失败时抛 `AggregateError`，避免清理失败掩盖真正的执行失败；非 `completed` 的终态一律算失败，但会带上诊断与部分输出。
 - **空串与空数组算「未给」**。用模板时传 `rules: []` 的意图是"没额外要求"，而不是"删掉模板的规则"。
 - **`callable_tools` 收一个数组**，每项写成 `工具名` 或 `工具名：用途`，由工具拆成表单那两个按索引配对的数组。
-- **选了 `output_format` 就补该格式骨架**，且只在本字段为空、或正文仍恰好是另一套骨架时覆盖 —— 与表单里点选格式的行为**逐字一致**（这条由测试直接断言两个入口产出相同）。
+- **`output_spec` 一旦给出就原样使用**，`output_format` 不改写它；只有 `output_spec` 未给时，`output_format` 才用于更新**模板底座**的说明（走 `applyFormatChoice`：底座为空或恰为某套骨架则整段填入，底座为「骨架 + 追加」则只换骨架、保留追加）。表单里点选格式走的是同一个函数，因此「模板 + 指定另一套格式」这类状态在两个入口逐字一致（由 `tests/golden/tool-*` 样本守住）。
 - **调用卡片只提供 `presentCall`**（用本次目标作标题）。结果是整段提示词，再写 `presentResult` 只会把同一段大文本塞进视图载荷 —— DSH 的 `run_code` 工具也是这个取舍。
 
 > 一致性由 `tests/test-tool.mjs` 守住：同一组字段经工具与经表单产出必须**逐字相同**。将来若有人在工具里另写一套拼装，测试会失败。
@@ -193,7 +193,6 @@ $env:DSH_SOURCE_ROOT = "<上一步克隆出来的目录>"   # 默认按 D:\dsh\d
 ```powershell
 # 1) 准备开发期依赖（幂等，只需一次）
 #    react / react-dom（测试与组件必须是同一实例）、@types/react（类型检查）、
-#    @deepseek-ai/dsh-tools（host 半边 import 的宿主包，只取类型；运行时由 Loader 提供）
 #    链接建在 .dev-deps/，**不是 node_modules** —— 理由见下方「为什么不用 node_modules」
 node tools/setup-dev-links.mjs
 
@@ -217,8 +216,8 @@ node tools/run-tests.mjs
 
 | 用途 | 通道 |
 | --- | --- |
-| 类型检查 | `tsconfig.json` 的 `paths` 指向 `.dev-deps/@types-react` 与 `.dev-deps/dsh-tools` |
-| 测试运行 | `tools/lib/loader-hook.mjs` 把 `react` / `react-dom` / `@deepseek-ai/dsh-tools` 重定向过去 |
+| 类型检查 | `tsconfig.json` 的 `paths` 把 `react` / `react/jsx-runtime` 指向 `.dev-deps/@types-react` |
+| 测试运行 | `tools/lib/loader-hook.mjs` 把 `react` / `react-dom`（含 `jsx-runtime`、`server` 子路径）重定向到 `.dev-deps/`，并把 `@deepseek-ai/dsh-client-store` 指向本地桩 `store-stub.mjs` |
 | 版本控制 | `.gitignore` 排除该目录 |
 
 `tools/setup-dev-links.mjs` 还会顺手清掉历史遗留的 `node_modules/`。安装产物校验
@@ -306,7 +305,7 @@ window.__ModuleLoader__.load({ id: 'dsh-plugin-structured-prompt', factory: requ
 ```
 
 - `react` 与 `@deepseek-ai/dsh-client-store` 走注入的 `require`（模块表提供），其余依赖内联；
-- `lib/index.js` 是 host 半边，本插件不注册模型可见输入，保持空 `apply`。
+- `lib/index.js` 是 host 半边：`apply` 只注册模型可调用的工具 `build_structured_prompt`（`inject: ['tools']`），不读取任何会话数据；产物**零 import**（见「为什么工具定义是手写的」）。
 
 ## 架构
 
@@ -356,4 +355,4 @@ DSH 里"接管输入框"看起来有两个更直接的位置，但都不能满�
 - **看不到入口**：确认已重启 DSH。浏览器控制台里 `ClientModuleSystem` 的加载失败会指向本插件的 `lib/client.js`。入口只在有当前会话时可用（没有会话时按钮禁用）。
 - **点了按钮没反应**：检查控制台是否有渲染异常；两个组件的判定与渲染都由共享 store 的 `useStore` 驱动，正常路径下点击即弹出表单。
 - **弹窗高于预期**：高度上限是 `70vh`，实际高度由内容决定。展开越多分组越高；超过上限后改为内容区滚动，这属于预期行为。
-- **手动模式里清单为空**：skills 清单按会话解析，空白会话可能没有可选项；插件清单只列启用中的条目。
+- **手动模式工具清单为空**：需点「+ 添加一个工具」逐行填写工具名；本插件不读取任何已安装清单（见「为什么不用清单选择」一节）。
