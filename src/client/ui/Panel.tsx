@@ -23,7 +23,7 @@ export interface StructuredInputPanelProps {
   useStore: SnapshotSelectorHook<StructuredState>
   /** store 的写座位。 */
   actions: FormActions
-  /** 把成稿写入输入框并直接发送（由宿主注入）。 */
+  /** 把成稿作为一条用户消息投递进当前会话（由宿主注入）。 */
   onSend: (prompt: string) => void
   /** 会话标识；无会话时不渲染。 */
   sessionId?: string

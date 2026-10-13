@@ -49,7 +49,7 @@ export interface StructuredPromptModalProps {
   actions: FormActions
   /** 关闭弹窗。 */
   onClose: () => void
-  /** 把成稿写入输入框并直接发送。 */
+  /** 把成稿作为一条用户消息投递进当前会话。 */
   onSend: (prompt: string) => void
 }
 
@@ -94,7 +94,7 @@ export function StructuredPromptModal({
     })
   }
 
-  /** 发送：把成稿交给宿主写入输入框并提交，然后关闭弹窗。 */
+  /** 发送：把成稿作为一条用户消息投递进当前会话，然后关闭弹窗。 */
   const send = (): void => {
     if (!canSend) return
     onSend(prompt)
