@@ -138,10 +138,16 @@ check('入口文件保持精简（不承载 UI 实现）',
 
 // 7) 本地产物不比源码旧：改了 src 却忘记 build 时，提交出去的 lib 会落后于源码
 //    （而安装方加载的正是 lib）。
+//
+// 容差 2 秒：`git checkout` / `merge` 会把工作区文件的 mtime 刷成同一时刻，读写顺序造成的
+// 毫秒级乱序会让严格比较误报"未重建"（实测 checkout 后差 7ms）。真正的落后是"改完源码几分钟
+// 内没构建"，2 秒容差照样抓得住。
+const MTIME_TOLERANCE_MS = 2000
 const newestSource = Math.max(...sources.map(file => statSync(file).mtimeMs))
 const bundleTime = existsSync(clientEntry) ? statSync(clientEntry).mtimeMs : 0
-check('lib/client.js 不早于最新源码（已重新构建）', bundleTime >= newestSource,
-  `bundle=${new Date(bundleTime).toISOString()} newestSrc=${new Date(newestSource).toISOString()}`)
+check('lib/client.js 不早于最新源码（已重新构建）', bundleTime >= newestSource - MTIME_TOLERANCE_MS,
+  `bundle=${new Date(bundleTime).toISOString()} newestSrc=${new Date(newestSource).toISOString()}`
+  + `（容差 ${MTIME_TOLERANCE_MS}ms）`)
 
 if (failures.length > 0) {
   console.error(`\n${failures.length} 项检查未通过：${failures.join('; ')}`)
