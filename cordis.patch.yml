@@ -16,3 +16,13 @@
 - insert:
     - id: dsh-plugin-structured-prompt
       name: dsh-plugin-structured-prompt
+      # 可选配置：默认用哪个子代理 provider。不写＝内建默认（spawn，存在时）。
+      # base bundle 同时注册 spawn 与 fork，装第三方 provider 的 profile 可用它改默认；
+      # 调用参数 `delegate.provider` 仍然优先。
+      #
+      # 注意两点：必须写在 `config:` 之下（写成条目层的 `provider:` 会被 loader 原样保留、
+      # 不报错也不生效）；`provider` 名是否已注册要到第一次 delegate 才校验。
+      # 配置形状不合法（非对象、含不支持的字段、provider 不是字符串）会在装载期抛错，
+      # 删掉这段 `config` 即可恢复默认。
+      # config:
+      #   provider: spawn

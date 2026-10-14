@@ -6,9 +6,17 @@
  *
  * 本半边只注册工具、不读任何会话数据：工具是纯函数（参数进、提示词出），因此不需要
  * `agent` / `session` 之类的依赖。
+ *
+ * 唯一的配置项是 `provider`（默认走哪个子代理 provider）—— 它属于"部署级选择"：DSH 的
+ * base bundle 同时注册 `spawn` 与 `fork`，装第三方 provider 的 profile 还会有别的候选。
+ * 不在 `cordis.patch.yml` 里写 `config` 就是现在的行为（内建默认 `spawn`）。
+ *
+ * 导出面刻意只有 `inject` / `Config` / `apply` 三个**命名**导出，没有 default：函数插件
+ * 混用 default 会让 Loader 丢掉命名空间（`docs/postmortem/0001-acp-default-export-drops-inject.md`）。
  */
 import type { HostPluginContext } from './host/tool.js'
 import { registerStructuredPromptTool } from './host/tool.js'
+import { narrowConfig } from './host/config.js'
 
 /**
  * host 侧依赖：只需要工具注册面。
@@ -18,10 +26,14 @@ import { registerStructuredPromptTool } from './host/tool.js'
  */
 export const inject = ['tools'] as const
 
+export { Config } from './host/config.js'
+
 /**
  * 插件 host 主体。
  * @param ctx - host 上下文。
+ * @param config - 装载行的 `config`。cordis 已经用 `Config` 校验并规范化过；这里再收窄一次
+ *   是为了 `apply` 被直接调用（测试、其它组装）时同样安全 —— 形状不对就抛错，不静默忽略。
  */
-export function apply(ctx: HostPluginContext): void {
-  registerStructuredPromptTool(ctx)
+export function apply(ctx: HostPluginContext, config?: unknown): void {
+  registerStructuredPromptTool(ctx, narrowConfig(config))
 }

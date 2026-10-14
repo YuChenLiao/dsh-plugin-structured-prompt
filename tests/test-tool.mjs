@@ -645,6 +645,110 @@ await signalTool.execute(
 check('工具层把 exec.signal 交给子代理运行',
   toolSignals.length === 1 && toolSignals[0] === toolController.signal)
 
+// ---- 6f) 装载行配置：默认 provider ----
+//
+// 部署级选择（用哪个子代理 provider）来自 `cordis.patch.yml` 的 `config`，而不是代码里的
+// 常量。校验由插件自己做：本插件不导出 `Config` schema（导出它必须 import 宿主包，而 host
+// 产物必须零 import），所以形状不对时必须报错 —— 否则"profile 里写着 fork、实际用 spawn"
+// 这种失效没人会发现。
+const { Config, narrowConfig } = await import(pathToFileURL(resolve(SRC, 'host', 'config.ts')).href)
+const { validate } = Config['~standard']
+
+// 导出的 `Config` 是 cordis 校验装载行配置的入口（只读 `['~standard'].validate`）：手写而
+// 不 import 校验库的理由见 `config.ts`。校验失败时 apply 根本不会被调用。
+check('Config 是可供 cordis 消费的 standard-schema 对象',
+  typeof validate === 'function' && Config['~standard'].version === 1)
+check('Config 校验通过时给出收窄后的配置', (() => {
+  const result = validate({ provider: '  fork  ' })
+  return !('issues' in result) && result.value.provider === 'fork'
+})())
+check('Config 校验失败时给出 issue 列表', (() => {
+  const result = validate({ provider: 42 })
+  return 'issues' in result && result.issues.length === 1
+    && result.issues[0].message.includes('config.provider')
+})())
+check('未写 config 时校验通过且得到空配置', (() => {
+  const result = validate(undefined)
+  return !('issues' in result) && Object.keys(result.value).length === 0
+})())
+
+check('未配置时收窄成空对象（等价于用内建默认）',
+  Object.keys(narrowConfig(undefined)).length === 0
+  && Object.keys(narrowConfig(null)).length === 0)
+check('YAML 空值（`provider:` 解析成 null）视同没配',
+  narrowConfig({ provider: null }).provider === undefined)
+check('provider 被收窄：去空白，空串算没配',
+  narrowConfig({ provider: '  fork  ' }).provider === 'fork'
+  && narrowConfig({ provider: '   ' }).provider === undefined)
+for (const [label, raw] of [
+  ['非对象', 'fork'],
+  ['数组', ['fork']],
+  ['provider 非字符串', { provider: 42 }],
+  ['含不支持的字段', { provider: 'spawn', nope: 1 }],
+]) {
+  const error = await rejectionOf(async () => narrowConfig(raw))
+  check(`配置形状不合法时报错（${label}）`, error !== null, String(error?.message ?? error))
+}
+
+// 配置是**默认值**：调用参数优先；空串与纯空白算「未给」，因而顶不掉配置。
+const configuredProviders = []
+const configuredTool = toolModule.createStructuredPromptTool(
+  {
+    tools: { register: () => () => {} },
+    get: name => (name === 'subagents'
+      ? {
+        list: () => ['fork', 'spawn'],
+        getProvider: providerName => ({ name: providerName }),
+        start: async (providerName) => {
+          configuredProviders.push(providerName)
+          return failingRun('child-configured', { output: [], stopReason: 'completed' })
+        },
+      }
+      : undefined),
+  },
+  { provider: 'fork' },
+)
+/**
+ * 用同一份配置的工具跑一次委托。
+ * @param delegate - delegate 参数。
+ * @returns 工具的 promise。
+ */
+const delegateWithConfig = (delegate) => configuredTool.execute(
+  { role: 'r', goal: 'g', delegate },
+  { signal: new AbortController().signal, agent: { id: 'agent' } },
+)
+await delegateWithConfig({})
+check('配置的 provider 作为默认', configuredProviders.at(-1) === 'fork',
+  String(configuredProviders.at(-1)))
+await delegateWithConfig({ provider: 'spawn' })
+check('调用参数覆盖配置', configuredProviders.at(-1) === 'spawn',
+  String(configuredProviders.at(-1)))
+await delegateWithConfig({ provider: '   ' })
+check('空串/纯空白的 provider 不会顶掉配置', configuredProviders.at(-1) === 'fork',
+  String(configuredProviders.at(-1)))
+const unknownConfigured = await rejectionOf(() => delegateWithConfig({ provider: 'nope' }))
+check('指定未注册的 provider 时报错并列出候选',
+  unknownConfigured !== null && String(unknownConfigured.message).includes('fork'),
+  String(unknownConfigured?.message ?? unknownConfigured))
+
+// 入口把配置交给注册面；不合法配置要在装载期就失败，而不是静默用默认策略跑起来。
+const applyModule = await import(pathToFileURL(resolve(SRC, 'index.ts')).href)
+const appliedTools = []
+applyModule.apply(
+  { tools: { register: tool => { appliedTools.push(tool); return () => {} } } },
+  { provider: 'fork' },
+)
+check('apply 接受装载行配置并注册一个工具',
+  appliedTools.length === 1 && appliedTools[0]?.name === toolModule.STRUCTURED_PROMPT_TOOL)
+const badApplyConfig = await rejectionOf(async () => applyModule.apply(
+  { tools: { register: () => () => {} } }, { provider: 42 },
+))
+check('apply 在不合法配置上抛错',
+  badApplyConfig !== null, String(badApplyConfig?.message ?? badApplyConfig))
+// 函数插件混用 default 会让 Loader 丢掉命名空间（`inject` / `Config` 一起丢）—— 这条契约
+// 在 `docs/postmortem/0001-acp-default-export-drops-inject.md` 里有真实事故。
+check('host 入口只有命名导出，没有 default', applyModule.default === undefined)
+
 // 未知模板 id 必须报错：静默降级成空白底座会产出一份短得多的提示词而无人察觉。
 check('未知 template 被拒（拼错时不再静默降级）',
   (await rejectionOf(() => run({ goal: 'g', template: 'code-reviw' }))) !== null)

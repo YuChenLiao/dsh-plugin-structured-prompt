@@ -16,6 +16,7 @@
 import { narrowArgs, prefer } from './args.js'
 import { buildFromArgs } from './build.js'
 import type { StructuredPromptValue } from './build.js'
+import type { HostPluginConfig } from './config.js'
 import { TOOL_DESCRIPTION, TOOL_OUTPUT_SCHEMA, TOOL_PARAMETERS_SCHEMA } from './parameters.js'
 import { resolveProviderName, runForeground } from './subagents.js'
 import type { SubagentsServiceLike } from './subagents.js'
@@ -133,9 +134,13 @@ export interface HostPluginContext {
  * 单独导出（而不是在模块顶层直接构造）是为了让测试能拿到定义直接调用 `execute` /
  * `render`，无需启动一个 Cordis 上下文。
  * @param ctx - host 侧插件上下文；省略时 `delegate` 会以"服务不可用"拒绝（其余能力不变）。
+ * @param config - 装载行里的插件配置；只影响 `delegate` 默认用哪个 provider。
  * @returns registry-ready 的工具定义。
  */
-export function createStructuredPromptTool(ctx?: HostPluginContext): ToolDefinitionLike {
+export function createStructuredPromptTool(
+  ctx?: HostPluginContext,
+  config?: HostPluginConfig,
+): ToolDefinitionLike {
   return {
     name: STRUCTURED_PROMPT_TOOL,
     description: TOOL_DESCRIPTION,
@@ -180,7 +185,12 @@ export function createStructuredPromptTool(ctx?: HostPluginContext): ToolDefinit
       if (exec.agent === undefined) {
         throw new Error('cannot delegate: this call has no owning agent to act as the parent')
       }
-      const providerName = resolveProviderName(subagents, delegate.provider)
+      // provider 的优先级：调用参数 > 装载行配置 > 内建默认（`spawn`）。空串与纯空白都算
+      // 「未给」，所以配置里的 `provider: 'fork'` 不会被模型传来的空串顶掉。
+      const providerName = resolveProviderName(
+        subagents,
+        prefer(delegate.provider, config?.provider),
+      )
       const outcome = await runForeground(
         subagents,
         providerName,
@@ -220,8 +230,12 @@ export function createStructuredPromptTool(ctx?: HostPluginContext): ToolDefinit
 /**
  * 注册结构化提示词工具。
  * @param ctx - host 侧插件上下文。
+ * @param config - 装载行里的插件配置（见 `config.ts`）。
  * @returns 服务的返回值（取消注册函数）。
  */
-export function registerStructuredPromptTool(ctx: HostPluginContext): unknown {
-  return ctx.tools.register(createStructuredPromptTool(ctx))
+export function registerStructuredPromptTool(
+  ctx: HostPluginContext,
+  config?: HostPluginConfig,
+): unknown {
+  return ctx.tools.register(createStructuredPromptTool(ctx, config))
 }

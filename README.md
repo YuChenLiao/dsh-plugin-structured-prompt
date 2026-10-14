@@ -100,7 +100,8 @@ host 半边注册一个工具 `build_structured_prompt`，让模型自己把模�
 几个刻意的取舍：
 
 - **`delegate` 走可选服务，不进 `inject`**。`ctx.get('subagents')` 缺失时，`delegate` 报错并指出"不带它调用即可拿到提示词" —— 把可选能力写成硬依赖，会让本插件在没装配子代理 provider 的组装里**整个不激活**。
-- **provider 不用配置项**：只注册一个时自动用它；多个时默认用 `spawn`（存在时），否则取第一个 —— DSH 的 base bundle 同时注册 `spawn` 与 `fork`，要求显式指定等于让功能开箱不可用，而 `fork` 会继承父会话上下文、语义与「独立委托」相反；只有显式传了未注册的名字才报错并列出候选；一个都没有则明确拒绝。
+- **provider 的默认值来自装载行的 `config`**，代码里不留可配置的假象：不写 `config` 时，只注册一个 provider 就用它，多个时用 `spawn`（存在时）、否则取第一个 —— DSH 的 base bundle 同时注册 `spawn` 与 `fork`，要求调用方显式指定等于让功能开箱不可用，而 `fork` 会继承父会话上下文、语义与「独立委托」相反。要用别的默认就在 `cordis.patch.yml` 的装载行写 `config: { provider: 'fork' }`；调用参数 `delegate.provider` 优先于它（空串与纯空白算「未给」，不会顶掉配置）。只有显式传了未注册的名字才报错并列出候选；一个都没有则明确拒绝。
+- **配置形状由导出的 `Config` 在装载期校验**：`config` 不是对象、含不支持的字段、或 `provider` 不是（写空的）字符串时，cordis 抛 `ValidationError` 并列出问题，`apply` 根本不会被调用 —— 静默忽略会让"profile 里写着 `fork`、实际用着 `spawn`"成为最难定位的那类失效。`Config` 是**手写**的 standard-schema 对象（不 import 校验库，见下节），判定与 `src/host/config.ts` 的 `narrowConfig` 同源。两点边界：`provider` 名**是否已注册**要到第一次 `delegate` 才校验（装载期还不知道子代理 provider 注册了什么）；`provider` 必须写在 `config:` 之下，写错层级会被 loader 原样保留、不报错。
 - **前台 run 的收尾照官方实现**：结果与 `dispose()` 并行 settle，两者都失败时抛 `AggregateError`，避免清理失败掩盖真正的执行失败；非 `completed` 的终态一律算失败，但会带上诊断与部分输出。
 - **空串（含纯空白）、空数组、全空白条目都算「未给」**。用模板时传 `rules: []` 或 `rules: ['']` 的意图是"没额外要求"，而不是"删掉模板的规则"。
 - **`callable_tools` 收一个数组**，每项写成 `工具名` 或 `工具名：用途`，由工具拆成表单那两个按索引配对的数组。
@@ -120,13 +121,17 @@ host 半边注册一个工具 `build_structured_prompt`，让模型自己把模�
 从源码目录 import '@deepseek-ai/dsh-tools'                    → ERR_MODULE_NOT_FOUND
 ```
 
-后果很隐蔽：模块加载失败 → 插件 fiber 停在**未激活**状态 → 工具不注册，**而且不报错**
-（巡检里表现为条目 `enabled: true` 但 `fiberPhase: null`，相邻插件都是 `"active"`）。
+后果很隐蔽：模块加载失败 → 插件 fiber 停在**未激活**状态 → 工具不注册。当时的表现是
+**不报错**（巡检里表现为条目 `enabled: true` 但 `fiberPhase: null`，相邻插件都是
+`"active"`），只能靠逐条比对定位；当前的 profile 启动会做最终审计（`assertEntriesActivated`：
+条目没进 `active` 就带上名字与原因抛错），同类问题会更响。
 `github:` 安装不会触发，因为包真实位于 profile 的 `node_modules` 下。
 
 所以 host 半边按 `ToolDefinition` 契约**手工构造**定义，**产物零 import**，与 client 半边
 「本地类型声明、不引入其包」的做法一致。代价是参数校验要自己写（`src/host/args.ts` 的
-`narrowArgs`）：不合规时**报错**而不是静默丢弃，失败说明会回到模型手里。
+`narrowArgs`）：不合规时**报错**而不是静默丢弃，失败说明会回到模型手里。配置校验也由此
+自己承担（`src/host/config.ts`）：导出的 `Config` 是手写的 standard-schema 对象，判定逻辑
+与 `narrowConfig` 同源，因此既能被 cordis 在装载期统一校验，又不引入任何运行时 import。
 
 `tests/verify-install.mjs` 断言 host 产物不含任何 `import` 行，防止这个约束被无意打破。
 
