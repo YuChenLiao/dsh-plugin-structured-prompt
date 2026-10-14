@@ -516,6 +516,135 @@ const blankTools = await run({ goal: 'g', tool_policy: 'manual', callable_tools:
 check('全空白的 callable_tools 不产生策略行',
   !toolPolicySection(blankTools.prompt).includes('只允许调用下列已指定的工具'))
 
+// ---- 6e) 委托的失败路径 ----
+//
+// `delegate` 的收尾规则是"照官方实现"：结果与 `dispose()` 并行 settle，两者都失败时抛
+// `AggregateError`，非 `completed` 的终态一律算失败但带上诊断与部分输出。这些分支此前
+// 只覆盖了 max-tokens 一种，其余靠读代码相信 —— 失败路径恰恰是最少被真人走到的地方。
+
+/**
+ * 造一个结果与释放都可控的假运行。
+ * @param id - 子会话 id。
+ * @param result - 终态结果；传 `Error` 表示运行本身被拒绝。
+ * @param disposeError - 传了就表示释放失败。
+ * @returns 假运行。
+ */
+const failingRun = (id, result, disposeError) => ({
+  id,
+  result: result instanceof Error ? Promise.reject(result) : Promise.resolve(result),
+  dispose: disposeError === undefined ? async () => {} : async () => { throw disposeError },
+})
+
+/**
+ * 用固定的假运行跑一次前台委托。
+ *
+ * 注意：`fakeSubagents` 忽略参数、每次 `start` 返回**同一个** run 对象，所以每个用例只跑
+ * 一次 —— `run.result` 是一次性 promise，重复跑会失真。
+ * @param run - 假运行。
+ * @returns `runForeground` 的 promise。
+ */
+const runWith = (run) => runForeground(
+  fakeSubagents(() => run), 'only', 'p', 'l', { id: 'agent' }, new AbortController().signal,
+)
+
+// 终态 → 错误信息的形状：未知终态也按失败处理，而不是把部分输出当成成功。
+for (const [stopReason, expected] of [
+  ['aborted', 'was cancelled'],
+  ['error', 'run failed'],
+  ['refusal', 'declined the task'],
+  ['weird-new-state', 'ended abnormally'],
+]) {
+  const error = await rejectionOf(() => runWith(failingRun('child-terminal', {
+    output: [], stopReason, diagnostic: 'because',
+  })))
+  check(`终态 ${stopReason} 按失败处理且带上诊断`,
+    error !== null && String(error.message).includes(expected)
+    && String(error.message).includes('Diagnostic: because'),
+    String(error?.message ?? error))
+}
+
+// 运行本身被拒绝：原样传播，不要包装成"终态异常"（否则真正的传输错误会被换掉）。
+const boom = new Error('transport exploded')
+const transportFailure = await rejectionOf(() => runWith(failingRun('child-rejected', boom)))
+check('运行被拒绝时原样传播该错误', transportFailure === boom, String(transportFailure))
+
+// 执行与释放都失败：抛 `AggregateError`，两个原因都要在 —— 清理失败不能掩盖执行失败，
+// 反过来也不行。
+const runFailure = new Error('run failed hard')
+const disposeFailure = new Error('dispose failed hard')
+const duplicated = await rejectionOf(() => runWith(
+  failingRun('child-aggregate', runFailure, disposeFailure),
+))
+check('执行与释放都失败时抛 AggregateError',
+  duplicated instanceof AggregateError && duplicated.errors.length === 2, String(duplicated))
+check('AggregateError 的两个原因按「执行、释放」顺序保留',
+  duplicated instanceof AggregateError
+  && duplicated.errors[0] === runFailure && duplicated.errors[1] === disposeFailure,
+  duplicated instanceof AggregateError ? duplicated.errors.map(String).join(' | ') : '(不是 AggregateError)')
+check('AggregateError 的说明同时点出两件事',
+  duplicated instanceof AggregateError
+  && String(duplicated.message).includes('run failed hard')
+  && String(duplicated.message).includes('dispose failed hard'))
+
+// 只有释放失败：结果成功也不掩盖清理失败。
+const disposeOnly = await rejectionOf(() => runWith(failingRun('child-dispose', {
+  output: [{ type: 'text', text: 'done' }], stopReason: 'completed',
+}, new Error('dispose only'))))
+check('只有释放失败时抛出释放错误',
+  disposeOnly !== null && String(disposeOnly.message).includes('dispose only'), String(disposeOnly))
+
+// 取消信号必须原样交给子代理运行，否则上层的取消管不到已启动的子代理。
+const signals = []
+const controller = new AbortController()
+await runForeground(
+  {
+    list: () => ['only'],
+    getProvider: name => ({ name }),
+    start: async (_name, request) => {
+      signals.push(request.signal)
+      return failingRun('child-signal', { output: [], stopReason: 'completed' })
+    },
+  },
+  'only', 'p', 'l', { id: 'agent' }, controller.signal,
+)
+check('取消信号原样传给子代理运行', signals.length === 1 && signals[0] === controller.signal)
+
+// provider 启动就失败：此时还没拿到 run，没有 dispose 要收尾，错误原样上抛。
+const startBoom = new Error('provider refused to start')
+const startFailure = await rejectionOf(() => runForeground(
+  {
+    list: () => ['only'],
+    getProvider: providerName => ({ name: providerName }),
+    start: async () => { throw startBoom },
+  },
+  'only', 'p', 'l', { id: 'agent' }, new AbortController().signal,
+))
+check('启动失败时原样抛出（没有 run 需要释放）', startFailure === startBoom, String(startFailure))
+
+// 工具层 → 子代理的取消链路：上一节只证明 `subagents` 会转发 signal，这里补上
+// 「`exec.signal` 真的交到了 `start()` 手上」——上层取消要能管到已启动的子代理。
+const toolSignals = []
+const toolController = new AbortController()
+const signalTool = toolModule.createStructuredPromptTool({
+  tools: { register: () => () => {} },
+  get: name => (name === 'subagents'
+    ? {
+      list: () => ['only'],
+      getProvider: providerName => ({ name: providerName }),
+      start: async (_providerName, request) => {
+        toolSignals.push(request.signal)
+        return failingRun('child-tool-signal', { output: [], stopReason: 'completed' })
+      },
+    }
+    : undefined),
+})
+await signalTool.execute(
+  { role: 'r', goal: 'g', delegate: {} },
+  { signal: toolController.signal, agent: { id: 'agent' } },
+)
+check('工具层把 exec.signal 交给子代理运行',
+  toolSignals.length === 1 && toolSignals[0] === toolController.signal)
+
 // 未知模板 id 必须报错：静默降级成空白底座会产出一份短得多的提示词而无人察觉。
 check('未知 template 被拒（拼错时不再静默降级）',
   (await rejectionOf(() => run({ goal: 'g', template: 'code-reviw' }))) !== null)
