@@ -126,6 +126,9 @@ check('暴露全部表单字段（+ template）',
   Object.keys(properties).join(', '))
 check('template 的 enum 覆盖全部内置模板',
   TEMPLATES.every(item => (properties.template.enum ?? []).includes(item.id)))
+// 只给 id 枚举，模型无从挑选；场景必须进 schema —— 它也是**常驻**成本，所以每句都要短。
+check('template 描述里带出每套模板的场景',
+  TEMPLATES.every(item => String(properties.template.description ?? '').includes(item.whenToUse)))
 check('output_format 的 enum 覆盖全部骨架格式',
   Object.keys(prompt.OUTPUT_FORMAT_SKELETONS)
     .every(key => (properties.output_format.enum ?? []).includes(key)))
@@ -259,7 +262,10 @@ check('手动策略下不出现"由你自行判断"',
 
 const rendered = definition.output.render(args, produced)
 check('render 返回单个 text block', rendered.length === 1 && rendered[0].type === 'text')
-check('render 输出提示词正文', rendered[0].text === produced.prompt)
+check('render 输出提示词正文', rendered[0].text.startsWith(produced.prompt))
+check('render 在正文后附上成本陈述（陈述事实，不是指令）',
+  rendered[0].text.includes('replayed on every later step'),
+  rendered[0].text.slice(produced.prompt.length, produced.prompt.length + 160))
 check('output schema 声明了 prompt/template/missing',
   ['prompt', 'template', 'missing'].every(key => key in definition.output.schema.properties))
 

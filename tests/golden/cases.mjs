@@ -221,4 +221,25 @@ export const CASES = [
       output_format: 'text', // 覆盖模板的 json 骨架
     },
   },
+  // 形态型模板（4 套）：与领域模板同源同格式，只是约束面向任务形态而非某个行业。
+  {
+    id: 'template-explore',
+    note: '内置模板：探索调研（先读后结论、分开写已确认与未解疑问）',
+    template: 'explore',
+  },
+  {
+    id: 'template-implement',
+    note: '内置模板：实现改动（最小改动、真实验证、未完成部分要标注）',
+    template: 'implement',
+  },
+  {
+    id: 'template-debug',
+    note: '内置模板：故障定位（证据优先、无法定论时给 null 与置信度）',
+    template: 'debug',
+  },
+  {
+    id: 'template-handoff',
+    note: '内置模板：交接归档（区分已完成与未开始、每条结论指向产物）',
+    template: 'handoff',
+  },
 ]

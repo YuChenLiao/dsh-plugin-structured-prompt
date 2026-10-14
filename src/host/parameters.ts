@@ -61,7 +61,8 @@ export const TOOL_PARAMETERS_SCHEMA = {
     template: {
       type: 'string',
       enum: TEMPLATE_IDS,
-      description: 'Start from a built-in template; its fields become defaults for anything you omit.',
+      description: 'Start from a built-in template: its fields become defaults for anything you omit, so you only fill what is task-specific. Pick by task shape — '
+        + TEMPLATES.map(item => `${item.id}: ${item.whenToUse}`).join('; ') + '.',
     },
     background: {
       type: 'string',
@@ -139,7 +140,7 @@ export const TOOL_PARAMETERS_SCHEMA = {
           description: 'Subagent provider name. Normally omit it: the deployment default is used (a one-shot run unless the profile configured otherwise). Pass it only to deliberately delegate through another registered provider — e.g. one that inherits this conversation instead of working independently.',
         },
       },
-      description: 'Run the built prompt as a foreground subagent instead of returning it. The prompt never enters your own context, which keeps long prompts cheap. Omit to just get the prompt back.',
+      description: 'Optional — run the built prompt as a foreground subagent instead of returning it. Useful when this conversation is already long, or when the work needs broad exploration: the prompt then never enters your own context. Avoid it on the first turn, while the task is still being pinned down and there is no history to work from: the child runs standalone and cannot see this conversation, so everything it needs must be written into the prompt.',
     },
   },
   required: ['role', 'goal'],

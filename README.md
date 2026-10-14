@@ -35,7 +35,7 @@ dsh plugin --profile desktop add github:YuChenLiao/dsh-plugin-structured-prompt
   - 刻意**不提供**「从已安装清单里勾选」：DSH 的插件清单列的是自带插件而非用户安装的插件，skills 清单也不属于本插件的职责；工具检索在输入框的 `/` 菜单里。本插件因此**不读 `remote.<namespace>`、也不读插件与 skills 清单**，`inject` 只有 `slots`（唯一触到主机的动作是发送链路：会话作用域上的 `conversation.send`）。
 - **填完即走**：要么点「复制」把成稿拿去别处用，要么点「发送」直接投递进当前会话。没有中间态。
 - **实时预览与预算**：表单底部可展开查看完整提示词；折叠标题给出字数与**估算 token**，展开后列出**逐段占用**（哪一段最吃上下文），便于发送前判断会不会太长。token 是估算（CJK 每字 1、其余每 4 字符 1），只用于判断量级。
-- **模板与导入导出**：内置「告警研判（原始示例）、代码审查、数据提取、报告撰写」四套模板；表单可导出为 JSON、从 JSON 导入，便于跨会话复用。导出文档带 **schema 版本号**；导入时只接受已知字段并逐字段校验形状 —— 未知键、类型不符、越界枚举会被丢弃并在界面上说明，旧版无版本号的文件仍可读。
+- **模板与导入导出**：内置八套模板 —— 4 套**任务形态**（探索调研、实现改动、故障定位、交接归档）与 4 套**领域样例**（告警研判（原始示例）、代码审查、数据提取、报告撰写）。模板数据是 `src/shared/templates.json`：表单下拉、工具的 `template` 枚举、黄金样本都从它取值，改模板不必碰代码。表单可导出为 JSON、从 JSON 导入，便于跨会话复用。导出文档带 **schema 版本号**；导入时只接受已知字段并逐字段校验形状 —— 未知键、类型不符、越界枚举会被丢弃并在界面上说明，旧版无版本号的文件仍可读。
 - **跟随主题**：颜色与阴影全部走 DSH 主题 token（`--dsw-alias-*`、`--dsw-elevation-prominent`），深浅色主题自动切换。
 
 ## 表单项（17 项）
@@ -93,7 +93,7 @@ host 半边注册一个工具 `build_structured_prompt`，让模型自己把模�
 | --- | --- |
 | 必填 | `role`（身份）、`goal`（目标）—— 与表单同一条规则 |
 | 可选 | 表单其余字段（`background` / `rules` / `forbidden` / `tool_policy` / `output_format` / `fallback` …） |
-| 模板 | `template` 可一键以内置模板为默认值，调用参数覆盖它 |
+| 模板 | `template` 按任务形态选一套内置模板作默认值（schema 里带每套的一句话场景），调用参数覆盖它 |
 | 直投 | `delegate: { label?, provider? }` 把提示词直接交给子代理执行，不进入本上下文 |
 | 返回 | `{ prompt, template, missing, delegated, delegation }`，模型看到的正文就是 `prompt`（或委托时的子代理输出）。`delegation` 非空表示**确实发生了委托**（形如 `spawn/child-1 (completed)`），未委托时为空串 —— 子代理正常完成但没有文本输出时 `delegated` 合法为空串，只能靠它区分「静默的子代理」与「没委托」 |
 
@@ -256,7 +256,8 @@ src/shared/                    两个半边共用的纯逻辑（无客户端/宿
   prompt.ts                    提示词分段与组装（段落顺序是契约）
   format.ts                    输出格式语义：骨架表、切换、遮蔽判定
   tokens.ts                    token 粗略估算（预算提示用）
-  templates.ts                 内置模板库（填字段，不填成稿）
+  templates.ts                 模板库的加载与形状校验（复用导入校验那份 `FIELD_SHAPES`）
+  templates.json               模板数据：单一真源，表单下拉 / 工具枚举 / 黄金样本都取自它
 src/client/
   index.ts                     客户端入口：槽位注册 + 样式注入（无 UI 实现）
   store.ts                     会话状态（defineStore 动作表）

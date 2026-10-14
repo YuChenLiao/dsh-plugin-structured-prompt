@@ -278,22 +278,25 @@ check('README 的安装命令指向本包',
 // 文件清单：README 提到的每个源文件/脚本名都要真实存在。代码结构树里的条目多为相对文件
 // 名（`ui/Trigger.tsx`、`tool.ts`），所以按文件名核对；带 src/tests/tools 前缀的完整路径
 // 再按路径核对一次（能抓住"指错半边"，例如把 host 入口写成 src/client/index.ts）。
+const SKIP_DIRS = new Set(['.git', '.dev-deps', 'node_modules'])
 const repoFiles = new Set()
 /**
- * 递归收集某个目录下的文件名。
+ * 递归收集仓库里的文件名（跳过 VCS、开发期依赖与 node_modules）。
  * @param dir - 目录绝对路径。
  */
 const collectNames = (dir) => {
   for (const entry of readdirSync(dir)) {
+    if (SKIP_DIRS.has(entry)) continue
     const full = resolve(dir, entry)
     if (statSync(full).isDirectory()) collectNames(full)
     else repoFiles.add(entry)
   }
 }
-for (const dir of ['src', 'tests', 'tools']) collectNames(resolve(PLUGIN_ROOT, dir))
+collectNames(PLUGIN_ROOT)
 const declaredNames = [...new Set(
   // 不限反引号：代码结构树整块是 ```text，里面没有反引号，只抓反引号会漏掉绝大多数清单项。
-  [...readme.matchAll(/([\w-]+(?:\.[\w-]+)*\.(?:tsx?|mjs))\b/g)]
+  // 含 `.json`：README 会提到 `package.json`、`tsconfig.json` 与模板库的 `templates.json`。
+  [...readme.matchAll(/([\w-]+(?:\.[\w-]+)*\.(?:tsx?|mjs|json))\b/g)]
     // 排除外部工具的路径（README 里给过 tsx 自己的 loader 绝对路径），它们不属于本仓库。
     .filter(match => !readme.slice(Math.max(0, match.index - 40), match.index).includes('node_modules/'))
     .map(match => match[1]),
@@ -344,6 +347,50 @@ const declaredSuiteCount = readmeCount(/全部验证（([一二三四五六七�
 check('README 声明的验证套数量与实际一致',
   declaredSuiteCount > 0 && declaredSuiteCount === suiteNames.length,
   `README=${declaredSuiteCount} 实际=${suiteNames.length}`)
+
+// ---- 8) 模板 JSON：形状、唯一性与场景说明 ----
+//
+// `src/shared/templates.json` 是模板的单一真源，也是**文件边界**：字段名写错、取值越界都要在
+// 这里先红，而不是等构建期抛错（构建期才发现会挡住整条流水线）。
+const { FIELD_SHAPES, matchesShape } = forms
+const templateDoc = JSON.parse(readFileSync(resolve(SRC, 'templates.json'), 'utf8'))
+const rawTemplates = templateDoc.templates
+
+check('模板 JSON 带 schema 版本号', templateDoc.version === 1 && Array.isArray(rawTemplates))
+check('每套模板都有 id / label / whenToUse / fields',
+  rawTemplates.every(item => typeof item.id === 'string' && item.id !== ''
+    && typeof item.label === 'string' && item.label !== ''
+    && typeof item.whenToUse === 'string' && item.whenToUse !== ''
+    && typeof item.fields === 'object' && item.fields !== null),
+  rawTemplates.map(item => item.id).join(', '))
+const templateIds = rawTemplates.map(item => item.id)
+check('模板 id 唯一', new Set(templateIds).size === templateIds.length, templateIds.join(', '))
+check('模板 id 都是 kebab-case 短名',
+  templateIds.every(id => /^[a-z][a-z0-9-]*$/.test(id)), templateIds.join(', '))
+check('每套模板的字段名与取值都符合表单形状',
+  rawTemplates.every(item => Object.entries(item.fields ?? {}).every(([key, value]) => {
+    const shape = FIELD_SHAPES[key]
+    return shape !== undefined && matchesShape(value, shape)
+  })),
+  rawTemplates.map(item => {
+    const bad = Object.entries(item.fields ?? {}).filter(([key, value]) => {
+      const shape = FIELD_SHAPES[key]
+      return shape === undefined || !matchesShape(value, shape)
+    })
+    return bad.length === 0 ? '' : `${item.id}: ${bad.map(([key]) => key).join('/')}`
+  }).filter(Boolean).join(', '))
+check('每套模板都填了 role 与 goal（模板要能独立产出提示词）',
+  rawTemplates.every(item => typeof item.fields?.role === 'string' && item.fields.role !== ''
+    && typeof item.fields?.goal === 'string' && item.fields.goal !== ''))
+// whenToUse 会常驻工具 schema（每步都在上下文里），所以长度本身是契约的一部分。
+check('whenToUse 是一句话（≤40 字，它是常驻成本）',
+  rawTemplates.every(item => item.whenToUse.length <= 40),
+  rawTemplates.filter(item => item.whenToUse.length > 40).map(item => item.id).join(', '))
+const { buildSystemPrompt } = await import(pathToFileURL(resolve(SRC, 'prompt.ts')).href)
+check('每套模板都能构建出以「# 身份」开头的提示词',
+  TEMPLATES.length === rawTemplates.length
+  && TEMPLATES.every(template => buildSystemPrompt(template.build()).startsWith('# 身份')),
+  `${TEMPLATES.length} 套`)
 
 // 构建脚本路径：README 给的命令存在，不等于 tools/package.json 的 script 也存在 —— 后者
 // 恰恰刚修过一次（指向了不存在的 tools/build.mjs）。npm 的 cwd 是 package.json 所在目录，

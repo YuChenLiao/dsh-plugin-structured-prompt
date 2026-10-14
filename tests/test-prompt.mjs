@@ -20,7 +20,7 @@ const {
 const { applyFormatChoice, formatSpecStatus } = await import(
   pathToFileURL(resolve(SHARED, 'format.ts')).href
 )
-const { TEMPLATES, ALERT_TRIAGE_FIELDS } = await import(
+const { TEMPLATES } = await import(
   pathToFileURL(resolve(SHARED, 'templates.ts')).href
 )
 const { createEmptyForm } = await import(pathToFileURL(resolve(SHARED, 'forms.ts')).href)
@@ -193,7 +193,8 @@ check('没选格式时说明自成一格（不算遮蔽）',
   && formatSpecStatus(OUTPUT_FORMAT_SKELETONS.json, '') === 'detached')
 
 // 6) 原始示例模板必须能复现「告警研判」示例的全部内容。
-const fromTemplate = buildSystemPrompt(form(ALERT_TRIAGE_FIELDS))
+// 模板库现在从 `templates.json` 加载，所以按「第一套」取，而不是按导出名。
+const fromTemplate = buildSystemPrompt(TEMPLATES[0].build())
 check('告警研判模板含阈值约束与 3 条编号规则',
   fromTemplate.includes('3. 阈值判断必须以指标配置为准') && !fromTemplate.includes('4. '))
 check('告警研判模板的策略为自动（未点名工具时不空转）',

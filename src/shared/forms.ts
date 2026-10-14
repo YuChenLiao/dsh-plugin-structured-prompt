@@ -29,12 +29,15 @@ const TOOL_POLICY_VALUES = ['', 'auto', 'manual'] as const satisfies readonly To
 const OUTPUT_FORMAT_VALUES: readonly string[] = ['', ...Object.keys(OUTPUT_FORMAT_SKELETONS)]
 
 /**
- * 每个字段的运行时形状，用于导入校验。
+ * 每个字段的运行时形状。
+ *
+ * 两处共用同一份定义：导入 JSON 文档的校验（本文件），以及内置模板库对
+ * `templates.json` 的校验（`templates.ts`）—— 后者同样是文件边界，坏数据要在构建期就报出来。
  *
  * 用 `satisfies Record<keyof PromptForm, string>` 约束：`PromptForm` 增删字段时这里
  * 会直接编译失败，不会悄悄漏掉一个字段的校验。
  */
-const FIELD_SHAPES = {
+export const FIELD_SHAPES = {
   role: 'string',
   goal: 'string',
   background: 'string',
@@ -111,11 +114,13 @@ export interface ParsedForm {
 
 /**
  * 按声明的形状校验一个字段值。
+ *
+ * 导入 JSON 文档与内置模板库（`templates.ts`）共用它。
  * @param value - 待校验的值。
  * @param shape - 期望形状。
  * @returns 是否合法。
  */
-function matchesShape(value: unknown, shape: string): boolean {
+export function matchesShape(value: unknown, shape: string): boolean {
   if (shape === 'string') return typeof value === 'string'
   if (shape === 'string[]') {
     return Array.isArray(value) && value.every(item => typeof item === 'string')

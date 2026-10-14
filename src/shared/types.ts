@@ -99,6 +99,14 @@ export interface ListFieldMeta {
 export interface PromptTemplate {
   readonly id: string
   readonly label: string
+  /**
+   * 一句话场景：模型据此挑选模板，也是工具 schema 里 `template` 取值的说明。
+   *
+   * 模板库省的从来不只是字段数：把「约束 + 输出 + 兜底」这类结构与任务形态绑定，模型只需给
+   * `role`/`goal` 与少量覆盖，产物反而更完整。代价是每句说明都**常驻**工具 schema（每步都在
+   * 上下文里），所以它必须短。
+   */
+  readonly whenToUse: string
   /** 返回**完整**表单（未填项由模板自己给空值），交给 store 的 `setForm`。 */
   build(): PromptForm
 }

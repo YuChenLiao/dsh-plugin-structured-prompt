@@ -14,6 +14,9 @@
     "noUnusedParameters": true,
 
     "jsx": "react-jsx",
+    // 内置模板库是 JSON（`src/shared/templates.json`）：打包器把它内联进两个产物（实测
+    // host / client 都没有外部引用），这里只需要让类型检查认识 JSON 导入。
+    "resolveJsonModule": true,
     "skipLibCheck": true,
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,

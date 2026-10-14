@@ -160,11 +160,17 @@ export function createStructuredPromptTool(
             text: `Delegated to a subagent (${value.delegation}); the built prompt was not added to this context.\n\n---\n${body}`,
           }]
         }
+        if (value.missing.length > 0) {
+          return [{
+            type: 'text',
+            text: `${value.prompt}\n\n---\n(Required field(s) still empty: ${value.missing.join(', ')}.)`,
+          }]
+        }
+        // 末尾这句是**成本陈述**，不是指令：这段文本确实会留在本上下文里。要不要改走
+        // `delegate` 由调用方自己判断 —— 插件不替它做选择（历史还短时委托反而更贵）。
         return [{
           type: 'text',
-          text: value.missing.length === 0
-            ? value.prompt
-            : `${value.prompt}\n\n---\n(Required field(s) still empty: ${value.missing.join(', ')}.)`,
+          text: `${value.prompt}\n\n---\n(This text is now part of your context and is replayed on every later step; calling again with \`delegate\` keeps the next one out of it.)`,
         }]
       },
     },
