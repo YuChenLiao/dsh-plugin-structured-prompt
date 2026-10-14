@@ -382,6 +382,8 @@ check('每套模板的字段名与取值都符合表单形状',
     })
     return bad.length === 0 ? '' : `${item.id}: ${bad.map(([key]) => key).join('/')}`
   }).filter(Boolean).join(', '))
+// 注意：这条不只是"模板质量"检查，它还是「参数边界允许模板补 role/goal」的**安全前提** ——
+// 一旦某套模板缺了这两项，放宽就会真的放出没有身份的产物。别把它当成可删的软断言。
 check('每套模板都填了 role 与 goal（模板要能独立产出提示词）',
   rawTemplates.every(item => typeof item.fields?.role === 'string' && item.fields.role !== ''
     && typeof item.fields?.goal === 'string' && item.fields.goal !== ''))

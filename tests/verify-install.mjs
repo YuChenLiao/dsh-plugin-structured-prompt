@@ -139,14 +139,30 @@ check('入口文件保持精简（不承载 UI 实现）',
 // 7) 本地产物不比源码旧：改了 src 却忘记 build 时，提交出去的 lib 会落后于源码
 //    （而安装方加载的正是 lib）。
 //
-// 容差 2 秒：`git checkout` / `merge` 会把工作区文件的 mtime 刷成同一时刻，读写顺序造成的
-// 毫秒级乱序会让严格比较误报"未重建"（实测 checkout 后差 7ms）。真正的落后是"改完源码几分钟
-// 内没构建"，2 秒容差照样抓得住。
+// 按半边划分源码集合：`lib/index.js` 由 host 半边 + shared + 入口决定，`lib/client.js` 由 client
+// 半边 + shared 决定。用"全部源码 vs 单个产物"比会把另一边算进来 —— 只改 host 时 client 产物会被
+// 误判成"没重新构建"（它其实根本没变）。
+//
+// 容差 2 秒：`git checkout` / `merge` 会把工作区文件的 mtime 刷成同一时刻，读写顺序造成的毫秒级
+// 乱序会让严格比较误报"未重建"。真正的落后是"改完源码几分钟内没构建"，容差照样抓得住。
 const MTIME_TOLERANCE_MS = 2000
-const newestSource = Math.max(...sources.map(file => statSync(file).mtimeMs))
-const bundleTime = existsSync(clientEntry) ? statSync(clientEntry).mtimeMs : 0
-check('lib/client.js 不早于最新源码（已重新构建）', bundleTime >= newestSource - MTIME_TOLERANCE_MS,
-  `bundle=${new Date(bundleTime).toISOString()} newestSrc=${new Date(newestSource).toISOString()}`
+/** 某个产物对应的源码集合。 */
+const sourcesUnder = (prefixes) => sources.filter((file) => {
+  const relative = file.slice(PLUGIN_ROOT.length + 1).replace(/\\/g, '/')
+  return prefixes.some(prefix => relative.startsWith(prefix))
+})
+const newestOf = (files) => Math.max(...files.map(file => statSync(file).mtimeMs))
+const hostEntryFile = resolve(PLUGIN_ROOT, 'lib', 'index.js')
+const hostNewest = newestOf(sourcesUnder(['src/host/', 'src/shared/', 'src/index.ts']))
+const clientNewest = newestOf(sourcesUnder(['src/client/', 'src/shared/']))
+check('lib/index.js 不早于它对应的源码（已重新构建）',
+  existsSync(hostEntryFile) && statSync(hostEntryFile).mtimeMs >= hostNewest - MTIME_TOLERANCE_MS,
+  `bundle=${existsSync(hostEntryFile) ? new Date(statSync(hostEntryFile).mtimeMs).toISOString() : '缺失'}`
+  + ` newestSrc=${new Date(hostNewest).toISOString()}（容差 ${MTIME_TOLERANCE_MS}ms）`)
+const clientBundleTime = existsSync(clientEntry) ? statSync(clientEntry).mtimeMs : 0
+check('lib/client.js 不早于它对应的源码（已重新构建）',
+  clientBundleTime >= clientNewest - MTIME_TOLERANCE_MS,
+  `bundle=${new Date(clientBundleTime).toISOString()} newestSrc=${new Date(clientNewest).toISOString()}`
   + `（容差 ${MTIME_TOLERANCE_MS}ms）`)
 
 if (failures.length > 0) {

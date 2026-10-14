@@ -113,7 +113,9 @@ check('参数 schema 是标准 JSON Schema（含 required 数组）',
   definition.parameters.type === 'object' && typeof definition.parameters.properties === 'object')
 // 与表单同一条规则：身份与目标必填。这是产品决策（表单里就是这两项必填），
 // 工具侧不放松 —— 否则两个入口对"什么算可提交的提示词"会有两套标准。
-check('role 与 goal 是必填参数',
+// schema 的 `required` 刻意保留：它表达期望（模型该尽量给出身份与目标），而实现在模板在场时容忍
+// 缺失 —— 两者不是矛盾，是"宽进严出"（见 6g 与 README 的取舍列表）。
+check('schema 仍声明 role / goal 必填（表达期望，实现在模板在场时容忍缺失）',
   [...(definition.parameters.required ?? [])].sort().join(',') === 'goal,role',
   JSON.stringify(definition.parameters.required))
 
@@ -762,6 +764,71 @@ check('apply 在不合法配置上抛错',
 // 函数插件混用 default 会让 Loader 丢掉命名空间（`inject` / `Config` 一起丢）—— 这条契约
 // 在 `docs/postmortem/0001-acp-default-export-drops-inject.md` 里有真实事故。
 check('host 入口只有命名导出，没有 default', applyModule.default === undefined)
+
+// ---- 6g) 模板可以替模型带上身份与目标 ----
+//
+// 这是「用模板减少要填字段」的前置条件：构建时 role/goal 走 `prefer(调用参数, 模板底座)`，但参数
+// 边界原来强制两者非空，模板永远补不进来。实测 10 次真实调用里有 2 次因漏传 role 直接失败，而那
+// 两次给出的其余字段都是对的 —— 一次白跑的代价是模型之后不再用它。
+/**
+ * 调用工具并把失败降级成**空值哨兵**：断言会因取值不符而红，同一节后面的断言仍照常执行。
+ * （裸 `await` 会让整套以未捕获异常结束，那样一条 FAIL 都看不到。）
+ * @param args - 工具参数。
+ * @returns 构建结果；失败时给出带失败原因的空结果。
+ */
+const tryExecute = async (args) => {
+  try {
+    return await definition.execute(args, { signal: new AbortController().signal })
+  } catch (error) {
+    return {
+      prompt: '',
+      template: '',
+      missing: [`<call failed: ${error instanceof Error ? error.message : String(error)}>`],
+    }
+  }
+}
+
+const templateOnly = await tryExecute({ goal: '只检查依赖变更。', template: 'code-review' })
+check('只给 goal + template 时不再因缺 role 被边界拒绝',
+  templateOnly.missing.length === 0, templateOnly.missing.join(','))
+check('身份由模板提供',
+  templateOnly.prompt.startsWith('# 身份\n') && templateOnly.prompt.includes('严格的高级工程师'),
+  templateOnly.prompt.slice(0, 90))
+check('模板回传的 id 仍是所选模板', templateOnly.template === 'code-review')
+
+const bothFromTemplate = await tryExecute({ template: 'code-review' })
+check('连 goal 也省掉时同样由模板补齐',
+  bothFromTemplate.missing.length === 0 && bothFromTemplate.prompt.includes('# 目标\n'),
+  bothFromTemplate.prompt.slice(0, 90))
+
+const overriddenRole = await tryExecute({
+  role: '一名临时审计员', goal: '只检查依赖变更。', template: 'code-review',
+})
+check('给了 role 就用调用参数的（模板只是默认值）',
+  overriddenRole.prompt.includes('一名临时审计员')
+  && !overriddenRole.prompt.includes('严格的高级工程师'))
+const blankRole = await tryExecute({ role: '   ', goal: 'x', template: 'code-review' })
+check('空白身份回退到模板（空串算「未给」）', blankRole.prompt.includes('严格的高级工程师'))
+
+const noTemplate = await rejectionOf(() => definition.execute({ goal: 'x' }))
+check('不带模板时缺 role 仍报错，且错误信息给出出路',
+  noTemplate !== null && /role/.test(String(noTemplate.message))
+  && String(noTemplate.message).includes('template'),
+  String(noTemplate?.message ?? noTemplate))
+check('放宽的是「缺失/空白」而不是类型：有模板时 role 传数字照样报错',
+  (await rejectionOf(() => definition.execute({ role: 42, goal: 'x', template: 'code-review' }))) !== null)
+
+// 下面两条钉的是**措辞**（口径一致性），不是可替换的同义词：改文案就要同步改断言 —— 与 `delegate`
+// 描述那条同源。示例那条用形式断言：换示例模板不该报错，删掉示例必须报错。
+check('工具说明与参数说明同口径：都写明模板会带上 role 与 goal',
+  String(definition.description).includes('carries both')
+  && String(properties.template.description ?? '').includes('including `role` and `goal`'),
+  String(definition.description).slice(0, 130))
+check('工具说明给出一个「模板 + 具体目标」的例子',
+  /For example: `\{ template: '[a-z-]+', goal: '[^']*' \}`/.test(String(definition.description)),
+  String(definition.description).slice(120, 320))
+check('goal 的描述提示「能写具体就写具体」',
+  String(properties.goal.description ?? '').includes('concrete task'))
 
 // 未知模板 id 必须报错：静默降级成空白底座会产出一份短得多的提示词而无人察觉。
 check('未知 template 被拒（拼错时不再静默降级）',

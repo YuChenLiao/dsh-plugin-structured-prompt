@@ -33,7 +33,7 @@ const ENUM_FIELDS: Record<string, readonly string[]> = {
   template: TEMPLATES.map(template => template.id),
 }
 
-/** 模型传入的参数（键全部可选；`role` / `goal` 由校验强制）。 */
+/** 模型传入的参数（键全部可选；`role` / `goal` 通常必填，传了 `template` 时可省，见 `narrowArgs`）。 */
 export interface ToolArgs extends Record<string, unknown> {
   role?: unknown
   goal?: unknown
@@ -54,10 +54,14 @@ export interface DelegateArgs {
  * 签名不能共存于交叉类型里，写成一个接口才能同时表达两者。
  */
 export interface NarrowedArgs {
-  /** 身份（必填，已 trim）。 */
-  role: string
-  /** 目标（必填，已 trim）。 */
-  goal: string
+  /**
+   * 身份（已 trim）。
+   *
+   * 可缺省：`template` 会带上它（`buildFromArgs` 里 role/goal 走 `prefer(调用参数, 模板底座)`）。
+   */
+  role?: string
+  /** 目标（已 trim）；与 `role` 同理可由模板提供。 */
+  goal?: string
   /** 委托参数；未要求委托时缺省。 */
   delegate?: DelegateArgs
   /** 其余表单字段按需存在（构建时逐项写入，故这里不能声明为只读）。 */
@@ -68,18 +72,33 @@ export interface NarrowedArgs {
  * 把模型传入的参数收窄成可用形状。
  * @param raw - 模型传入的参数。
  * @returns 收窄后的参数。
- * @throws {Error} 缺少必填项或字段类型不符时。
+ * @throws {Error} 字段类型不符、枚举越界，或"未指模板且缺 role/goal"时。
  */
 export function narrowArgs(raw: unknown): NarrowedArgs {
   if (typeof raw !== 'object' || raw === null) throw new Error('arguments must be an object')
   const args = raw as ToolArgs
   const problems: string[] = []
 
+  // 身份与目标：通常必填，但**模板可以带**（构建时它们走 `prefer(调用参数, 模板底座)`）。
+  // 所以只有"既没指模板、又没给"时才报错 —— 否则"只填任务特有的字段、其余交给模板"这条路径
+  // 会被边界拦住，而模板存在的意义恰恰是少填字段。
+  //
+  // 这不是放松约束，而是把约束挪到能给出路的地方：实测模型 10 次调用里有 2 次因为漏传 `role`
+  // 直接失败，而它当时给出的其余字段都是对的 —— 一次白跑换来的是它放弃继续用这个工具。
+  // 类型错误照旧必报；只有"缺失或空白"才看模板在不在场。
+  const usesTemplate = typeof args['template'] === 'string' && args['template'].trim() !== ''
   for (const field of ['role', 'goal'] as const) {
     const value = args[field]
-    if (typeof value !== 'string' || value.trim() === '') {
-      problems.push(`${field} is required and must be a non-empty string`)
+    if (value !== undefined && typeof value !== 'string') {
+      problems.push(`${field} must be a string`)
+      continue
     }
+    if (typeof value === 'string' && value.trim() !== '') continue
+    if (usesTemplate) continue
+    problems.push(
+      `${field} is required and must be a non-empty string `
+      + '(or pass `template`: every built-in template carries a role and a goal)',
+    )
   }
   for (const field of STRING_FIELDS) {
     const value = args[field]
@@ -129,11 +148,14 @@ export function narrowArgs(raw: unknown): NarrowedArgs {
   }
   if (problems.length > 0) throw new Error(`invalid arguments: ${problems.join('; ')}`)
 
-  const narrowed: NarrowedArgs = {
-    role: (args.role as string).trim(),
-    goal: (args.goal as string).trim(),
-    ...(delegate === undefined ? {} : { delegate }),
+  // role/goal 只在确实给出非空串时写入：缺省时留给 `prefer` 去回退模板底座，
+  // 不能在这里写成空串（那会把"未给"变成"给了个空串"）。
+  const narrowed: NarrowedArgs = {}
+  for (const field of ['role', 'goal'] as const) {
+    const value = args[field]
+    if (typeof value === 'string' && value.trim() !== '') narrowed[field] = value.trim()
   }
+  if (delegate !== undefined) narrowed['delegate'] = delegate
   for (const field of STRING_FIELDS) {
     const value = args[field]
     if (typeof value === 'string') narrowed[field] = value

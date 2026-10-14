@@ -242,4 +242,10 @@ export const CASES = [
     note: '内置模板：交接归档（区分已完成与未开始、每条结论指向产物）',
     template: 'handoff',
   },
+  {
+    id: 'tool-template-supplies-identity',
+    note: '工具路径：只给 goal，身份由模板提供（模板在场时 role 不再是参数边界的前置条件）',
+    via: 'tool',
+    args: { goal: '只检查依赖变更。', template: 'code-review' },
+  },
 ]

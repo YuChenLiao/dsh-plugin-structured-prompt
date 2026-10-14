@@ -91,7 +91,7 @@ host 半边注册一个工具 `build_structured_prompt`，让模型自己把模�
 
 | 项 | 说明 |
 | --- | --- |
-| 必填 | `role`（身份）、`goal`（目标）—— 与表单同一条规则 |
+| 必填 | `role`（身份）、`goal`（目标）—— 与表单同一条规则；**用 `template` 时这两项可以省略**，内置模板都带它们 |
 | 可选 | 表单其余字段（`background` / `rules` / `forbidden` / `tool_policy` / `output_format` / `fallback` …） |
 | 模板 | `template` 按任务形态选一套内置模板作默认值（schema 里带每套的一句话场景），调用参数覆盖它 |
 | 直投 | `delegate: { label?, provider? }` 把提示词直接交给子代理执行，不进入本上下文 |
@@ -100,6 +100,7 @@ host 半边注册一个工具 `build_structured_prompt`，让模型自己把模�
 几个刻意的取舍：
 
 - **`delegate` 走可选服务，不进 `inject`**。`ctx.get('subagents')` 缺失时，`delegate` 报错并指出"不带它调用即可拿到提示词" —— 把可选能力写成硬依赖，会让本插件在没装配子代理 provider 的组装里**整个不激活**。
+- **模板可以替模型带上身份与目标**：`role`/`goal` 通常必填，但只要传了 `template`，缺省或空白的那一项就由模板提供（构建时它们走「调用参数优先、未给用模板底座」）。这不是放松约束，而是让「只填任务特有的字段」真的能发生 —— 参数边界原来强制两者非空，模板永远补不进来，实测 10 次真实调用里有 2 次正是因为漏传 `role` 直接失败。放宽的只是「缺失/空白」，类型错误照旧必报；不带模板时缺 `role` 会报错，错误信息里指出可以用模板。
 - **provider 的默认值来自装载行的 `config`**，代码里不留可配置的假象：不写 `config` 时，只注册一个 provider 就用它，多个时用 `spawn`（存在时）、否则取第一个 —— DSH 的 base bundle 同时注册 `spawn` 与 `fork`，要求调用方显式指定等于让功能开箱不可用，而 `fork` 会继承父会话上下文、语义与「独立委托」相反。要用别的默认就在 `cordis.patch.yml` 的装载行写 `config: { provider: 'fork' }`；调用参数 `delegate.provider` 优先于它（空串与纯空白算「未给」，不会顶掉配置）。只有显式传了未注册的名字才报错并列出候选；一个都没有则明确拒绝。
 - **配置形状由导出的 `Config` 在装载期校验**：`config` 不是对象、含不支持的字段、或 `provider` 不是（写空的）字符串时，cordis 抛 `ValidationError` 并列出问题，`apply` 根本不会被调用 —— 静默忽略会让"profile 里写着 `fork`、实际用着 `spawn`"成为最难定位的那类失效。`Config` 是**手写**的 standard-schema 对象（不 import 校验库，见下节），判定与 `src/host/config.ts` 的 `narrowConfig` 同源。两点边界：`provider` 名**是否已注册**要到第一次 `delegate` 才校验（装载期还不知道子代理 provider 注册了什么）；`provider` 必须写在 `config:` 之下，写错层级会被 loader 原样保留、不报错。
 - **前台 run 的收尾照官方实现**：结果与 `dispose()` 并行 settle，两者都失败时抛 `AggregateError`，避免清理失败掩盖真正的执行失败；非 `completed` 的终态一律算失败，但会带上诊断与部分输出。

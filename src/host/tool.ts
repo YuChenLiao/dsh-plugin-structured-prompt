@@ -163,6 +163,10 @@ export function createStructuredPromptTool(
         if (value.missing.length > 0) {
           // 必填还缺时给的是"未成稿的提示词 + 缺什么"，这里**不**追加成本陈述：这份文本本来就
           // 不该被直接使用，混进一句话只会干扰真正要传达的信息。
+          //
+          // 当前规则下这条分支**不可达**：没指模板时 role/goal 缺失会在参数边界被拒，指了模板时
+          // 内置模板都带这两个字段（有断言盯着）。它是留给"某个模板漏了 role/goal"的兜底 —— 那时
+          // 提示词照样能构建出来，比整次调用失败更容易纠正。
           return [{
             type: 'text',
             text: `${value.prompt}\n\n---\n(Required field(s) still empty: ${value.missing.join(', ')}.)`,

@@ -28,12 +28,13 @@ export const TEMPLATE_IDS: string[] = TEMPLATES.map(template => template.id)
 /** 模型面向的工具说明。 */
 export const TOOL_DESCRIPTION = [
   'Build a precise, structured prompt and return it verbatim.',
-  'Use it to turn a vague delegation into an explicit one: fill `role` and `goal` (plus',
-  'whichever optional fields matter) and pass the returned text as the `prompt` argument',
-  'of the subagent tool. Those two are required, matching the form; every other field is',
-  'optional — add `rules`, `forbidden`, `output_format`, `fallback` and so on when the',
-  'child needs tighter constraints. `template` starts from a built-in template — its',
-  'fields act as defaults and anything you pass overrides them.',
+  'Use it to turn a vague delegation into an explicit one: fill `role` and `goal`, or start',
+  'from a `template` (every built-in one carries both), then pass the returned text as the',
+  '`prompt` argument of the subagent tool. Every other field is optional — add `rules`,',
+  '`forbidden`, `output_format`, `fallback` and so on when the child needs tighter',
+  'constraints. A template\'s fields act as defaults and anything you pass overrides them;',
+  'state the concrete task even when the template already has a goal, since that goal is',
+  'generic. For example: `{ template: \'code-review\', goal: \'<the concrete task>\' }`.',
   // 说清"什么时候不该用"：简单任务直接调 subagent 更省，否则模型会对每个委托都先构建一遍。
   'Skip it for simple delegations — calling the subagent tool directly with a plain task is',
   'cheaper. This tool earns its cost when the child needs several explicit constraints you',
@@ -52,16 +53,16 @@ export const TOOL_PARAMETERS_SCHEMA = {
   properties: {
     role: {
       type: 'string',
-      description: 'The identity the target agent should adopt (e.g. "a strict senior engineer"). Required, like the form.',
+      description: 'The identity the target agent should adopt (e.g. "a strict senior engineer"). Required, like the form — unless `template` carries it, in which case you may omit it.',
     },
     goal: {
       type: 'string',
-      description: 'The task the target agent must accomplish. One or two imperative sentences.',
+      description: 'The task the target agent must accomplish. One or two imperative sentences. Required unless `template` carries it — but state the concrete task whenever you can: a template only carries a generic one.',
     },
     template: {
       type: 'string',
       enum: TEMPLATE_IDS,
-      description: 'Start from a built-in template: its fields become defaults for anything you omit, so you only fill what is task-specific. Pick by task shape — '
+      description: 'Start from a built-in template: its fields — including `role` and `goal` — become defaults for anything you omit, so you only fill what is task-specific. Pick by task shape — '
         + TEMPLATES.map(item => `${item.id}: ${item.whenToUse}`).join('; ') + '.',
     },
     background: {
