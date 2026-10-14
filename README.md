@@ -286,6 +286,11 @@ tests/                         test-prompt / test-golden / test-document / test-
 `src/shared/` 是**两个半边的交汇点**：客户端表单与模型工具都调用同一份 `buildSystemPrompt`，
 所以两种入口产出的提示词必然一致（`tests/test-tool.mjs` 会逐字比对）。
 
+`tests/test-document.mjs` 守两类文档契约：导出/导入的 JSON 文档，以及本 README 里能机器
+核对的硬事实（表项数量、行数上限、分组与模板数量、槽位键与架构表、工具返回形状、工具名、
+`inject` 声明、依赖清单、仓库地址、文件清单、验证套清单、构建脚本路径）。改实现时漏改
+README，那套会先红。
+
 ### 槽位注册契约（注册测试守住的那条线）
 
 `useStore` / `actions` **不是**槽位标准 props。渲染器只在注册声明了 `store` 座位时才注入它们：
