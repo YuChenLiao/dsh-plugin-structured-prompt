@@ -300,6 +300,24 @@ const declaredNames = [...new Set(
 )]
 const unknownNames = declaredNames.filter(name => !repoFiles.has(name))
 check('README 提到的源文件/脚本都存在', unknownNames.length === 0, unknownNames.join(', '))
+// 反向核对：`src/` 下的每个文件都要被 README 提到。只做单向检查时新增文件不会让断言变红 ——
+// 结构树曾经漏掉过 `host/config.ts`，而按 basename 的存在性检查被 `ui/config.ts` 满足了。
+const srcFiles = new Set()
+/**
+ * 收集 `src/` 下的文件名。
+ * @param dir - 目录绝对路径。
+ */
+const collectSrcNames = (dir) => {
+  for (const entry of readdirSync(dir)) {
+    const full = resolve(dir, entry)
+    if (statSync(full).isDirectory()) collectSrcNames(full)
+    else srcFiles.add(entry)
+  }
+}
+collectSrcNames(resolve(PLUGIN_ROOT, 'src'))
+const undocumented = [...srcFiles].filter(name => !declaredNames.includes(name))
+check('README 的文件清单覆盖了 src/ 下的每个文件', undocumented.length === 0,
+  `${undocumented.join(', ')}（已列 ${declaredNames.length} 个名字）`)
 check('README 的文件清单覆盖面足够（不是只列了两三个文件）', declaredNames.length >= 35,
   `${declaredNames.length} 个`)
 const declaredPaths = [...new Set(

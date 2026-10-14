@@ -13,7 +13,7 @@
 import type { CSSProperties } from 'react'
 import { COLORS } from './theme.js'
 
-// 主题常量从这里再导出一次，让组件只需 import 一个模块。
+// 主题常量从这里再导出一次，兼容既有的 `./styles.js` import 路径。
 export { COLORS, LINE_PX, TEXTAREA_MAX_PX, TEXTAREA_MIN_PX, triggerButtonStyle } from './theme.js'
 
 /** 弹窗遮罩：不绑定点击关闭（见 `Modal.tsx` 的说明）。 */

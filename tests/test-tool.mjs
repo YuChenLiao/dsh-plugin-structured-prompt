@@ -5,7 +5,8 @@
  *  1. 工具与客户端表单产出的提示词**完全一致** —— 两个入口共用 `shared/prompt.ts`，
  *     这条断言防止将来有人在工具里另写一套拼装；
  *  2. 模板作为默认值、调用参数覆盖它，且空串/空数组算"未给"；
- *  3. `goal` 是 schema 层强制的必填项（不是靠运行时兜底）。
+ *  3. `goal` 与 `role` 是必填项：参数 schema 标记了 `required`，**参数边界**再校验一次
+ *     （`narrowArgs`），因为手工构造的定义不经过 `defineTool` 的编译期校验。
  *
  * 用法：node --import tsx --import ./tools/lib/loader-hook.mjs tests/test-tool.mjs
  */
@@ -84,7 +85,7 @@ const check = (label, ok, detail = '') => {
   if (!ok) failed += 1
 }
 
-// defineTool 在构造时会编译并校验 schema：这一步抛错本身就是失败信号。
+// 定义是手工构造的（不经过 `defineTool`）：构造这一步抛错本身就是失败信号。
 let definition
 try {
   definition = toolModule.createStructuredPromptTool()
@@ -234,15 +235,12 @@ check('模板的其它字段作为默认值保留',
   })())
 
 // 空串与空数组视为"未给"：模板给了规则时，传 [] 不该把它清空。
-const templateForm = firstTemplate.build()
-if (templateForm.rules.length > 0) {
-  const emptied = await run({ goal: 'x', template: firstTemplate.id, rules: [] })
-  const filled = await run({ goal: 'x', template: firstTemplate.id })
-  check('空数组不覆盖模板的规则', emptied.prompt === filled.prompt)
-} else {
-  const emptied = await run({ goal: 'x', rules: [], role: '' })
-  check('空数组/空串视为未给', !emptied.prompt.includes('## 身份'))
-}
+const firstTemplateForm = firstTemplate.build()
+const emptied = await run({ goal: 'x', template: firstTemplate.id, rules: [] })
+const filled = await run({ goal: 'x', template: firstTemplate.id })
+check('空数组不覆盖模板的规则（模板确有规则时）',
+  firstTemplateForm.rules.length > 0 && emptied.prompt === filled.prompt,
+  `模板规则 ${firstTemplateForm.rules.length} 条`)
 
 // ---- 5) callable_tools 的名字与用途拆分配对 ----
 
@@ -305,8 +303,8 @@ check('输出 schema 含 delegated',
 check('不委托时 delegated 为空串',
   (await run({ goal: 'g' })).delegated === '')
 
-// provider 选择：不引入配置项，靠"有默认值"而不是"多个候选就报错"。
-// DSH 的 base bundle 同时注册 spawn 与 fork，要求显式指定等于让功能开箱不可用。
+// provider 选择：靠"有默认值"而不是"多个候选就报错"。DSH 的 base bundle 同时注册 spawn 与
+// fork，要求显式指定等于让功能开箱不可用。这段只测纯选择函数；装载行配置的优先级在 6f。
 check('只有一个 provider 时自动选它', resolveProviderName(fakeSubagents(() => {}), undefined) === 'only')
 check('显式指定可用 provider',
   resolveProviderName(fakeSubagents(() => {}), 'only') === 'only')
@@ -648,9 +646,8 @@ check('工具层把 exec.signal 交给子代理运行',
 // ---- 6f) 装载行配置：默认 provider ----
 //
 // 部署级选择（用哪个子代理 provider）来自 `cordis.patch.yml` 的 `config`，而不是代码里的
-// 常量。校验由插件自己做：本插件不导出 `Config` schema（导出它必须 import 宿主包，而 host
-// 产物必须零 import），所以形状不对时必须报错 —— 否则"profile 里写着 fork、实际用 spawn"
-// 这种失效没人会发现。
+// 常量。校验交给导出的 `Config`（手写的 standard-schema 对象）：形状不对时 cordis 在装载期
+// 抛错、`apply` 不会被调用 —— 否则"profile 里写着 fork、实际用 spawn"这种失效没人会发现。
 const { Config, narrowConfig } = await import(pathToFileURL(resolve(SRC, 'host', 'config.ts')).href)
 const { validate } = Config['~standard']
 

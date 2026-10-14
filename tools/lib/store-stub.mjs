@@ -1,9 +1,9 @@
 /**
- * 离线渲染测试用的 store 桩：实现 `defineStore` 的最小契约
- * （`create(scopeKey)` → 实例；实例暴露 getSnapshot / subscribe / actions）。
+ * 离线渲染测试用的 store 桩：实现 `defineStore` 的最小契约（`create()` → 实例；实例暴露
+ * getSnapshot / subscribe / actions；句柄上的 scopeKey 在本桩里被忽略）。
  *
- * 动作按「浅拷贝状态 → 交给声明式 mutator → 通知订阅者」执行，与宿主的
- * zustand + immer 语义在这条路径上等价（状态是 JSON 兼容的普通对象）。
+ * 动作按「深拷贝状态 → 交给声明式 mutator → 通知订阅者」执行，与宿主的 zustand + immer
+ * 语义在这条路径上等价（状态是 JSON 兼容的普通对象）。
  */
 
 /** 深拷贝：状态树全部是 JSON 兼容值。 */

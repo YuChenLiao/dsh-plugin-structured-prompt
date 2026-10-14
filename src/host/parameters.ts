@@ -6,10 +6,12 @@
  *
  * 宿主包（`@deepseek-ai/dsh-tools`）只能从 profile 的 node_modules 解析，而 `link:`
  * 安装下插件经 junction 加载，ESM 会 realpath 到源码目录，向上找不到任何 node_modules
- * → 模块加载失败 → 插件 fiber 停在未激活状态（表现为工具不注册，且不报错）。
+ * → 模块加载失败 → 插件 fiber 停在未激活状态（表现为工具不注册；当时的现场里连错误都不
+ * 显眼，当前的 profile 启动有最终审计会把未激活的条目连名字一起抛出来）。
  * client 半边本来就用本地类型声明避开同类问题，host 半边照做。
  *
- * 与 `tool.ts` 分开是为了让那个文件只承载「参数 → 表单 → 提示词」的映射逻辑。
+ * 与 `tool.ts` 分开，是为了让 schema 这类纯数据与「定义 / 执行 / 卡片」的代码各归一处
+ * （参数 → 表单 → 提示词的映射在 `build.ts`）。
  */
 import { OUTPUT_FORMAT_SKELETONS } from '../shared/format.js'
 import { TEMPLATES } from '../shared/templates.js'
@@ -134,7 +136,7 @@ export const TOOL_PARAMETERS_SCHEMA = {
         },
         provider: {
           type: 'string',
-          description: 'Subagent provider name. Normally omit it: the default (a one-shot run) is used. Pass it only to deliberately delegate through another registered provider — e.g. one that inherits this conversation instead of working independently.',
+          description: 'Subagent provider name. Normally omit it: the deployment default is used (a one-shot run unless the profile configured otherwise). Pass it only to deliberately delegate through another registered provider — e.g. one that inherits this conversation instead of working independently.',
         },
       },
       description: 'Run the built prompt as a foreground subagent instead of returning it. The prompt never enters your own context, which keeps long prompts cheap. Omit to just get the prompt back.',

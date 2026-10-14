@@ -6,7 +6,7 @@
  * 保存、导出、并交给子代理的东西 —— 它一旦漂移，影响面很宽。
  *
  * 更新期望文件（**生成后务必打开核对**）：
- *   node tests/test-golden.mjs --update
+ *   node --import tsx --import ./tools/lib/loader-hook.mjs tests/test-golden.mjs --update
  *
  * 用法：node --import tsx --import ./tools/lib/loader-hook.mjs tests/test-golden.mjs
  */

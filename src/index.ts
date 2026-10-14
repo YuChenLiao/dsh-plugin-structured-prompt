@@ -12,7 +12,8 @@
  * 不在 `cordis.patch.yml` 里写 `config` 就是现在的行为（内建默认 `spawn`）。
  *
  * 导出面刻意只有 `inject` / `Config` / `apply` 三个**命名**导出，没有 default：函数插件
- * 混用 default 会让 Loader 丢掉命名空间（`docs/postmortem/0001-acp-default-export-drops-inject.md`）。
+ * 混用 default 会让 Loader 丢掉命名空间（DSH 源码树里的
+ * `docs/postmortem/0001-acp-default-export-drops-inject.md`）。
  */
 import type { HostPluginContext } from './host/tool.js'
 import { registerStructuredPromptTool } from './host/tool.js'

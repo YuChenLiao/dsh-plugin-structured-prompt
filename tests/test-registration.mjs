@@ -6,7 +6,7 @@
  * 时才注入它们。漏声明会让组件拿到 `undefined`、渲染时抛错、条目被隔离失效
  * （表现为"按钮消失"）。这条契约只能本文件这样在注册层校验。
  *
- * 用法：node --import ./tools/lib/loader-hook.mjs tests/test-registration.mjs
+ * 用法：node --import tsx --import ./tools/lib/loader-hook.mjs tests/test-registration.mjs
  */
 import { pathToFileURL } from 'node:url'
 import { resolve, dirname } from 'node:path'
@@ -133,11 +133,11 @@ check('未知会话下发送不抛错', sendError === null, sendError === null ?
 
 // ---- 4) 依赖面最小化 ----
 
-// 本插件不读主机数据（工具名由用户手填），因此不应该再依赖 remote。一旦有人把
-// remote 加回来，这里会提醒：那意味着又引入了 RPC 依赖。
+// 本插件不读 remote 命名空间，也不读插件/skills 清单（工具名由用户手填），因此不应该依赖
+// remote。一旦有人把 remote 加回来，这里会提醒：那意味着又引入了 RPC 依赖。
 check('inject 只声明 slots',
   mod.inject.length === 1 && mod.inject[0] === 'slots', mod.inject.join(', '))
-check('inject 不依赖 remote（本插件不读主机数据）',
+check('inject 不依赖 remote（本插件不读 remote 命名空间）',
   !mod.inject.some(name => name === 'remote' || name.startsWith('remote.')), mod.inject.join(', '))
 
 if (failed > 0) {

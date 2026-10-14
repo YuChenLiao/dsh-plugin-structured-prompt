@@ -27,12 +27,12 @@ dsh plugin --profile desktop add github:YuChenLiao/dsh-plugin-structured-prompt
 - **点遮罩不关闭**：遮罩不绑定点击处理器，避免误触丢失已填内容；关闭只经由标题栏的 `×` 或 Esc。
 - **分组不裁剪内容**：分组只用「标题 + 分隔线」，**不用卡片包裹**。卡片带来 `overflow: hidden`，会把需要更多高度的字段裁掉、也截断外层滚动——这正是"表单项展示不全"的根因。任何层级都不设 `max-height` 去限制字段。
 - **`min-height: 0` 只属于滚动容器**：分组容器**不写** `min-height`，保留默认的 `min-height: auto` 让它按内容撑高；若误写在分组上，分组会被压缩到内容高度以下、子元素互相压叠（症状是分组标题与上一个字段的输入框重叠）。这条与上一条一样由渲染测试直接断言。
-- **表单字段不限高**：多行文本域不写死行数，高度随内容自适应（`field-sizing: content`，不支持的浏览器由 `onInput` 兜底）。
+- **表单字段不限高**：多行文本域不写死行数，高度随内容自适应（`field-sizing: content`，不支持的浏览器由首挂载与 `onChange` 时的 JS 兜底）。
 - **四组、默认只展开基础信息**：基础信息展开，约束与规则 / 工具策略 / 输出与兜底默认折叠，展开哪组只看哪组。
 - **工具策略自动或手动**：
   - **自动**：交给模型自行判断，提示词里只写一句「由你根据任务需要自行判断并选择要调用的工具；不需要工具时直接回答。」
   - **手动**：由你**直接填写**要允许调用的工具名（可加一行用途），提示词生成「只允许调用下列已指定的工具，其余工具一律不要使用」+ 逐行清单。工具名与用途按原始索引配对：用途可留空（只写工具名），工具名留空的行整体忽略。
-  - 刻意**不提供**「从已安装清单里勾选」：DSH 的插件清单列的是自带插件而非用户安装的插件，skills 清单也不属于本插件的职责；工具检索在输入框的 `/` 菜单里。本插件因此**不读取任何主机数据**，`inject` 只有 `slots`。
+  - 刻意**不提供**「从已安装清单里勾选」：DSH 的插件清单列的是自带插件而非用户安装的插件，skills 清单也不属于本插件的职责；工具检索在输入框的 `/` 菜单里。本插件因此**不读 `remote.<namespace>`、也不读插件与 skills 清单**，`inject` 只有 `slots`（唯一触到主机的动作是发送链路：会话作用域上的 `conversation.send`）。
 - **填完即走**：要么点「复制」把成稿拿去别处用，要么点「发送」直接投递进当前会话。没有中间态。
 - **实时预览与预算**：表单底部可展开查看完整提示词；折叠标题给出字数与**估算 token**，展开后列出**逐段占用**（哪一段最吃上下文），便于发送前判断会不会太长。token 是估算（CJK 每字 1、其余每 4 字符 1），只用于判断量级。
 - **模板与导入导出**：内置「告警研判（原始示例）、代码审查、数据提取、报告撰写」四套模板；表单可导出为 JSON、从 JSON 导入，便于跨会话复用。导出文档带 **schema 版本号**；导入时只接受已知字段并逐字段校验形状 —— 未知键、类型不符、越界枚举会被丢弃并在界面上说明，旧版无版本号的文件仍可读。
@@ -133,7 +133,7 @@ host 半边注册一个工具 `build_structured_prompt`，让模型自己把模�
 自己承担（`src/host/config.ts`）：导出的 `Config` 是手写的 standard-schema 对象，判定逻辑
 与 `narrowConfig` 同源，因此既能被 cordis 在装载期统一校验，又不引入任何运行时 import。
 
-`tests/verify-install.mjs` 断言 host 产物不含任何 `import` 行，防止这个约束被无意打破。
+`tests/verify-install.mjs` 断言 host 产物不含静态 `import`、动态 `import(` 与 `require(`，防止这个约束被无意打破。
 
 ## 安装
 
@@ -239,7 +239,7 @@ node --import file:///D:/dsh/deepseek-harness/node_modules/tsx/dist/loader.mjs `
 
 ### 代码结构
 
-单文件不超过 **260 行**（由 `tests/verify-install.mjs` 断言），入口只做装配：
+单文件不超过 **260 行**、客户端入口不超过 **140 行**（都由 `tests/verify-install.mjs` 断言），入口只做装配：
 
 ```text
 src/index.ts                   host 半边入口：注册模型可调用的工具
@@ -249,6 +249,7 @@ src/host/
   args.ts                      参数收窄 / 校验 / 默认值回退
   parameters.ts                参数与输出 schema（标准 JSON Schema）
   subagents.ts                 直投子代理：provider 选择 + 前台 run 的收尾
+  config.ts                    装载行配置的收窄与 Config schema（装载期校验）
 src/shared/                    两个半边共用的纯逻辑（无客户端/宿主依赖）
   types.ts                     共享类型（表单、状态、分组元数据）
   forms.ts                     空白表单、片段补全、导出/导入的版本化文档
@@ -259,6 +260,8 @@ src/shared/                    两个半边共用的纯逻辑（无客户端/宿
 src/client/
   index.ts                     客户端入口：槽位注册 + 样式注入（无 UI 实现）
   store.ts                     会话状态（defineStore 动作表）
+  send.ts                      把成稿发进会话（会话作用域的 conversation.send）
+  plugin-context.ts            消费到的 Cordis 上下文形态（本地声明，不引入宿主包）
   dsh-client-store.d.ts        DSH store 的本地类型声明（不引入其包）
   ui/
     theme.ts                   颜色 token 与文本域尺寸
@@ -315,7 +318,7 @@ window.__ModuleLoader__.load({ id: 'dsh-plugin-structured-prompt', factory: requ
 ```
 
 - `react` 与 `@deepseek-ai/dsh-client-store` 走注入的 `require`（模块表提供），其余依赖内联；
-- `lib/index.js` 是 host 半边：`apply` 只注册模型可调用的工具 `build_structured_prompt`（`inject: ['tools']`），不读取任何会话数据；产物**零 import**（见「为什么工具定义是手写的」）。
+- `lib/index.js` 是 host 半边：`apply` 收窄装载行配置、注册模型可调用的工具 `build_structured_prompt`（`inject: ['tools']`），不读取任何会话数据；产物**零 import**（见「为什么工具定义是手写的」）。
 
 ## 架构
 
@@ -335,7 +338,7 @@ store.ts (状态) ──► ui/Panel.tsx ──► ui/Modal.tsx ──► ui/sec
                         │                  │
                         │                  └──► ui/ModalFooter.tsx（模板 / 导入导出 / 复制发送）
                         └──► ui/Trigger.tsx（同一 store 的另一处只读/写）
-prompt.ts (纯函数) ◄── PromptForm ── ui/OutputSection.tsx（选格式时填骨架）
+format.ts (纯函数) ◄── PromptForm ── ui/OutputSection.tsx（选格式时填骨架）
 ```
 
 ### 为什么不用另外两个候选挂载点

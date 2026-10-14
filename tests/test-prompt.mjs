@@ -4,7 +4,9 @@
  * `prompt.ts` 是纯模块，可以直接导入比对。这里的第一个断言最重要：它把生成结果
  * 与本插件最初那份示例的期望输出**逐字**对比，防止重构改动提示词格式。
  *
- * 用法：node tests/test-prompt.mjs
+ * 用法：node --import tsx --import ./tools/lib/loader-hook.mjs tests/test-prompt.mjs
+ * （`tsx` 提供 TS 转译，`loader-hook` 把相对的 `.js` 说明符映射到 `.ts` 源 —— 直接
+ * `node tests/test-prompt.mjs` 会在 `import './format.js'` 处报模块找不到。）
  */
 import { pathToFileURL } from 'node:url'
 import { resolve, dirname } from 'node:path'

@@ -2,6 +2,10 @@
  * 安装自检：确认插件已被 profile 正确安装（`link:` 或 `github:` 皆可），产物符合
  * DSH 加载契约，本地构建与源码同步，并且源码保持模块化（单文件行数上限）。
  *
+ * 覆盖七类检查：profile 安装状态、profile 清单里的依赖与 bundles 声明、插件自带的
+ * bundle patch、host 半边的导出与零 import、client 产物的动态 bundle 格式、源码模块化
+ * 与行数上限、产物不比源码旧。
+ *
  * 在源码变更或重新安装后运行，可在重启 DSH 之前发现问题。
  *
  * 用法：node tests/verify-install.mjs

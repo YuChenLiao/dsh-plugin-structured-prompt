@@ -1,8 +1,8 @@
 /**
  * 表单组件的共享 props 形状。
  *
- * 独立成文件是为了打断循环引用：`editors/*` 需要表单动作，而 `sections/*` 既需要
- * 动作也需要编辑器。类型层没有运行时依赖，独立声明最省事。
+ * 独立成文件是为了打断循环引用：逐条编辑器（`ListEditor` / `ToolPairEditor`）需要表单动作，
+ * 而 `sections/*` 既需要动作也需要编辑器。类型层没有运行时依赖，独立声明最省事。
  */
 import type { BakedActions } from '@deepseek-ai/dsh-client-store'
 import type { StructuredActions } from '../store.js'

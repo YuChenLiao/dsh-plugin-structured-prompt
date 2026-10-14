@@ -2,8 +2,9 @@
  * host 半边的插件配置（来自 `cordis.patch.yml` 装载行的 `config`）。
  *
  * 配置校验交给 cordis：本模块导出 {@link Config}（standard-schema 的形状），而 cordis 只在
- * 插件导出 `Config` 时才校验配置 —— 形状不对会在**装载期**抛 `ValidationError` 并列出问题，
- * 插件不必自己抛。
+ * 插件导出 `Config` 时才校验配置（`vendor/cordis/src/fiber.ts` 的 `resolveConfig`：没有
+ * `Config` 就把 config 原样交给 `apply`）—— 形状不对会在**装载期**抛 `ValidationError` 并列出
+ * 问题，插件不必自己抛。
  *
  * `Config` 是**手写**的，没有 import 任何校验库：它的接口就是一个 `{ '~standard': { validate } }`
  * 对象，而本插件的 host 产物必须零运行时 import（`link:` 安装下 ESM 会 realpath 到源码目录，

@@ -64,7 +64,7 @@ export function TextArea({ value, onChange, placeholder, ariaLabel }: TextAreaPr
     ...inputStyle,
     minHeight: TEXTAREA_MIN_PX,
     maxHeight: TEXTAREA_MAX_PX,
-    // 支持的浏览器走 CSS 自适应；不支持的由 onInput 兜底。
+    // 支持的浏览器走 CSS 自适应；不支持的由首挂载与 onChange 时的 JS 兜底。
     ...(contentSizing ? { fieldSizing: 'content' } : {}),
   }
   return (
