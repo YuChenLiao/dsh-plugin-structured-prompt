@@ -130,12 +130,16 @@ check('template 的 enum 覆盖全部内置模板',
 check('template 描述里带出每套模板的「id: 场景」配对',
   TEMPLATES.every(item => String(properties.template.description ?? '').includes(`${item.id}: ${item.whenToUse}`)))
 // 「`delegate` 是可选路径、首轮慎用」是这一批的产品决策，用断言钉住它不被改回"更省 token"的口吻。
-const delegateDescription = String(properties.delegate.description ?? '')
+// 注意：断言覆盖**子字段**的描述，否则「总是用这个 provider」这类默认语气可以从 `provider` 里溜回去。
+const delegateText = [
+  properties.delegate.description,
+  properties.delegate.properties?.provider?.description,
+].map(value => String(value ?? '')).join(' ')
 check('delegate 描述钉住「可选」与「首轮风险」，且不含默认/优先措辞',
-  delegateDescription.startsWith('Optional')
-  && delegateDescription.includes('first turn')
-  && !/\balways\b|\bby default\b|\bprefer\b|\buse it first\b/i.test(delegateDescription),
-  delegateDescription.slice(0, 140))
+  delegateText.startsWith('Optional')
+  && delegateText.includes('first turn')
+  && !/\balways\b|\bby default\b|\bprefer\b|\buse it first\b/i.test(delegateText),
+  delegateText.slice(0, 140))
 check('output_format 的 enum 覆盖全部骨架格式',
   Object.keys(prompt.OUTPUT_FORMAT_SKELETONS)
     .every(key => (properties.output_format.enum ?? []).includes(key)))

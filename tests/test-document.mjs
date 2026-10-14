@@ -58,7 +58,10 @@ check('往返后无告警', roundTrip.warnings.length === 0, roundTrip.warnings.
 check('往返后字段逐项一致',
   JSON.stringify(completeForm(roundTrip.patch)) === JSON.stringify(sample))
 check('模板表单也能往返', (() => {
-  const built = TEMPLATES[0].build()
+  // 空模板库时 `TEMPLATES[0]` 是 undefined：用可选链并把这种情况落成 FAIL，而不是让整套以
+  // `Cannot read properties of undefined` 结束（那样同一文件里后面的断言一条都不会执行）。
+  const built = TEMPLATES[0]?.build()
+  if (built === undefined) return false
   const back = parseFormDocument(JSON.stringify(serializeForm(built)))
   return JSON.stringify(completeForm(back.patch)) === JSON.stringify(built)
 })())
