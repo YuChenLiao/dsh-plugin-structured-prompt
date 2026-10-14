@@ -22,8 +22,6 @@ export const COLORS = {
   accent: 'var(--dsw-alias-state-business-primary, #4d6bfe)',
   accentSoft: 'var(--dsw-alias-state-business-tertiary, rgba(77,107,254,0.14))',
   danger: 'var(--dsw-alias-state-error-primary, #e5484d)',
-  /** 返回确认条的极淡底色（分组不用卡片，这里仍需要一点填充做区分）。 */
-  subtle: 'var(--dsw-alias-bg-module-platform, rgba(128,128,128,0.05))',
 } as const
 
 /** 文本域行高（px）：fontSize 13 × lineHeight 1.55 ≈ 20，用于自适应高度换算。 */

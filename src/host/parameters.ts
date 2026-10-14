@@ -11,7 +11,7 @@
  *
  * 与 `tool.ts` 分开是为了让那个文件只承载「参数 → 表单 → 提示词」的映射逻辑。
  */
-import { OUTPUT_FORMAT_SKELETONS } from '../shared/prompt.js'
+import { OUTPUT_FORMAT_SKELETONS } from '../shared/format.js'
 import { TEMPLATES } from '../shared/templates.js'
 
 /**

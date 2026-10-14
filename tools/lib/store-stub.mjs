@@ -44,15 +44,3 @@ export function defineStore(decl) {
     },
   }
 }
-
-/** 渲染测试不需要真实的快照存储引擎。 */
-export function createSnapshotStore(init) {
-  let state = init
-  const listeners = new Set()
-  return {
-    getSnapshot: () => state,
-    subscribe: (listener) => { listeners.add(listener); return () => { listeners.delete(listener) } },
-    set: (next) => { state = next; for (const l of [...listeners]) l() },
-    update: (mutator) => { const draft = clone(state); mutator(draft); state = draft; for (const l of [...listeners]) l() },
-  }
-}

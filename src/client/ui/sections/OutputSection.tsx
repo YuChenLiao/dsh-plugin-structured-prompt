@@ -3,7 +3,7 @@
  *
  * 选格式类型时会顺带更新格式说明里的骨架部分：说明为空就整段填入；已在某套骨架基础
  * 上追加过内容就只换骨架、保留追加；完全手写的说明不动（用户显式覆盖了格式类型）。
- * 规则本身在 `shared/prompt.ts` 的 `applyFormatChoice`（纯函数，便于测试），并在说明
+ * 规则本身在 `shared/format.ts` 的 `applyFormatChoice`（纯函数，便于测试），并在说明
  * 覆盖了格式类型时给出一句提示，避免"高亮的格式类型其实不生效"。
  */
 import type { ReactNode } from 'react'

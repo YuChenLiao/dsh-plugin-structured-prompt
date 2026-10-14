@@ -91,12 +91,13 @@ export interface DelegationOutcome {
 /**
  * 选出要用的 provider。
  *
- * 不引入配置项：只有一个 provider 时直接用它；多个时要求显式指定（错误信息会把可选值
- * 列出来，调用方据此重试）；一个都没有说明该组装没装配子代理能力。
+ * 不引入配置项：只有一个 provider 时直接用它；多个时取 {@link PREFERRED_PROVIDER}
+ * （存在时），否则取第一个；`requested` 只在非空时才被当作"点名"，那时它必须已注册。
+ * 一个都没有说明该组装没装配子代理能力。
  * @param subagents - 子代理服务。
- * @param requested - 调用方指定的 provider 名（可选）。
+ * @param requested - 调用方指定的 provider 名（可选；空串按未指定处理）。
  * @returns 生效的 provider 名。
- * @throws {Error} 未注册任何 provider、或指定了不存在的名字时。
+ * @throws {Error} 未注册任何 provider、或点名了一个不存在的名字时。
  */
 export function resolveProviderName(
   subagents: SubagentsServiceLike,

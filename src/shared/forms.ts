@@ -8,7 +8,7 @@
  * schema 版本号，以及把导入的任意 JSON **过滤 + 校验**成已知字段 —— 直接铺进表单
  * 会让未知键混进 `PromptForm`。
  */
-import { OUTPUT_FORMAT_SKELETONS } from './prompt.js'
+import { OUTPUT_FORMAT_SKELETONS } from './format.js'
 import type { PromptForm, ToolPolicy } from './types.js'
 
 /** 导出文档的当前 schema 版本。字段增删或语义变化时递增。 */

@@ -6,7 +6,6 @@
  */
 import type { ReactNode } from 'react'
 import type { SectionMeta } from '../../shared/types.js'
-import type { FormActions } from './actions.js'
 import { COLORS, sectionBodyStyle, sectionHeadStyle, sectionStyle } from './styles.js'
 
 /** 可折叠分组的 props。 */
@@ -47,6 +46,3 @@ export function CollapsibleSection({
     </div>
   )
 }
-
-/** 分组容器需要的 store 动作子集：只有折叠切换。 */
-export type SectionToggleActions = Pick<FormActions, 'toggleSection'>
