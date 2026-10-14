@@ -387,10 +387,22 @@ check('whenToUse 是一句话（≤40 字，它是常驻成本）',
   rawTemplates.every(item => item.whenToUse.length <= 40),
   rawTemplates.filter(item => item.whenToUse.length > 40).map(item => item.id).join(', '))
 const { buildSystemPrompt } = await import(pathToFileURL(resolve(SRC, 'prompt.ts')).href)
+// 逐套构建并把异常落成**命名 FAIL**：坏数据不该让整套以未捕获异常结束（那样这节剩余断言一条都
+// 不会执行、也没有可读的失败名）。
+const templateProblems = TEMPLATES.flatMap(template => {
+  try {
+    return buildSystemPrompt(template.build()).startsWith('# 身份')
+      ? [] : [`${template.id}: 产物不是以「# 身份」开头`]
+  } catch (error) {
+    return [`${template.id}: ${error instanceof Error ? error.message : String(error)}`]
+  }
+})
 check('每套模板都能构建出以「# 身份」开头的提示词',
-  TEMPLATES.length === rawTemplates.length
-  && TEMPLATES.every(template => buildSystemPrompt(template.build()).startsWith('# 身份')),
-  `${TEMPLATES.length} 套`)
+  TEMPLATES.length === rawTemplates.length && templateProblems.length === 0,
+  `${TEMPLATES.length} 套${templateProblems.length === 0 ? '' : `；问题：${templateProblems.join('; ')}`}`)
+check('README 的模板清单里出现了每套模板的 label',
+  TEMPLATES.every(template => readme.includes(template.label)),
+  TEMPLATES.map(template => template.label).join('、'))
 
 // 构建脚本路径：README 给的命令存在，不等于 tools/package.json 的 script 也存在 —— 后者
 // 恰恰刚修过一次（指向了不存在的 tools/build.mjs）。npm 的 cwd 是 package.json 所在目录，

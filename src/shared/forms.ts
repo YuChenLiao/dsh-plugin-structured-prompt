@@ -32,7 +32,7 @@ const OUTPUT_FORMAT_VALUES: readonly string[] = ['', ...Object.keys(OUTPUT_FORMA
  * 每个字段的运行时形状。
  *
  * 两处共用同一份定义：导入 JSON 文档的校验（本文件），以及内置模板库对
- * `templates.json` 的校验（`templates.ts`）—— 后者同样是文件边界，坏数据要在构建期就报出来。
+ * `templates.json` 的校验（`templates.ts`）—— 后者同样是文件边界，坏数据在**模块加载期**就报出来。
  *
  * 用 `satisfies Record<keyof PromptForm, string>` 约束：`PromptForm` 增删字段时这里
  * 会直接编译失败，不会悄悄漏掉一个字段的校验。

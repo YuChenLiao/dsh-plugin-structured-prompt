@@ -126,9 +126,16 @@ check('暴露全部表单字段（+ template）',
   Object.keys(properties).join(', '))
 check('template 的 enum 覆盖全部内置模板',
   TEMPLATES.every(item => (properties.template.enum ?? []).includes(item.id)))
-// 只给 id 枚举，模型无从挑选；场景必须进 schema —— 它也是**常驻**成本，所以每句都要短。
-check('template 描述里带出每套模板的场景',
-  TEMPLATES.every(item => String(properties.template.description ?? '').includes(item.whenToUse)))
+// 只给 id 枚举，模型无从挑选；场景必须进 schema 且与 id 配对 —— 后者也是**常驻**成本。
+check('template 描述里带出每套模板的「id: 场景」配对',
+  TEMPLATES.every(item => String(properties.template.description ?? '').includes(`${item.id}: ${item.whenToUse}`)))
+// 「`delegate` 是可选路径、首轮慎用」是这一批的产品决策，用断言钉住它不被改回"更省 token"的口吻。
+const delegateDescription = String(properties.delegate.description ?? '')
+check('delegate 描述钉住「可选」与「首轮风险」，且不含默认/优先措辞',
+  delegateDescription.startsWith('Optional')
+  && delegateDescription.includes('first turn')
+  && !/\balways\b|\bby default\b|\bprefer\b|\buse it first\b/i.test(delegateDescription),
+  delegateDescription.slice(0, 140))
 check('output_format 的 enum 覆盖全部骨架格式',
   Object.keys(prompt.OUTPUT_FORMAT_SKELETONS)
     .every(key => (properties.output_format.enum ?? []).includes(key)))

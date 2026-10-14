@@ -161,6 +161,8 @@ export function createStructuredPromptTool(
           }]
         }
         if (value.missing.length > 0) {
+          // 必填还缺时给的是"未成稿的提示词 + 缺什么"，这里**不**追加成本陈述：这份文本本来就
+          // 不该被直接使用，混进一句话只会干扰真正要传达的信息。
           return [{
             type: 'text',
             text: `${value.prompt}\n\n---\n(Required field(s) still empty: ${value.missing.join(', ')}.)`,

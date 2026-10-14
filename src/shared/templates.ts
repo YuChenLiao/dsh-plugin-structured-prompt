@@ -47,6 +47,10 @@ function toTemplateFields(fields: Record<string, unknown>, id: string): Partial<
 
 const RAW = raw as { readonly templates: readonly RawTemplate[] }
 
+// 加载期校验一次：坏数据在 `import` 时就炸，而不是拖到"某条路径第一次用到那套模板"。
+// `build()` 是惰性的（每次调用都会再校验一遍），只靠它会把这个错误推迟到首次使用。
+for (const entry of RAW.templates) toTemplateFields(entry.fields, entry.id)
+
 /**
  * 内置模板库。
  *
