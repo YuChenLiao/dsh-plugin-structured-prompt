@@ -289,6 +289,7 @@ tools/
 tests/                         test-prompt / test-golden / test-document / test-tool
                                / test-registration / test-render / verify-install
   golden/                      提示词格式的契约样本（cases.mjs + 每个用例的 .txt）
+docs/changes/                  每个批次的归档：行为变更、契约影响、以及「评估后决定不做」的方案
 ```
 
 `src/shared/` 是**两个半边的交汇点**：客户端表单与模型工具都调用同一份 `buildSystemPrompt`，
