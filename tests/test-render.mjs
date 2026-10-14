@@ -238,10 +238,25 @@ check('底部操作栏含全部操作控件',
 
 // 发送：把成稿交给宿主（此处是测试记录的 onSend），并由弹窗自行关闭。
 // SSR 无法点击，因此断言按钮可点（未勾选必填时禁用）与成稿就绪。
-check('成稿就绪时发送按钮可用', /title="把提示词投递进当前会话"/.test(filled.html))
+/**
+ * 取出「发送」按钮的开标签。
+ *
+ * 不能用 title 定位：「复制」按钮在必填缺失时带**同一个** title，只查 title 的断言
+ * 在两个按钮上都成立，等于没锁住发送按钮。
+ * @param html - 一次渲染的结果。
+ * @returns 发送按钮的开标签（找不到时为空串）。
+ */
+const sendTagOf = (html) => /<button[^>]*>发送<\/button>/.exec(html)?.[0] ?? ''
+check('成稿就绪时发送按钮可用',
+  sendTagOf(filled.html).includes('title="把提示词投递进当前会话"')
+  && !sendTagOf(filled.html).includes('disabled'),
+  sendTagOf(filled.html))
 instance.actions.setField('role', '')
 const missingRequired = panel()
-check('必填未填时发送按钮禁用', missingRequired.html.includes('title="身份与目标为必填"'))
+check('必填未填时发送按钮禁用',
+  sendTagOf(missingRequired.html).includes('disabled')
+  && sendTagOf(missingRequired.html).includes('title="身份与目标为必填"'),
+  sendTagOf(missingRequired.html))
 instance.actions.setField('role', '身份示例')
 
 // 格式类型被手写说明覆盖时，界面必须说出来：否则用户改选格式后看到的是与选择不符的
@@ -278,14 +293,23 @@ globalThis.document = originalDoc
 check('navigator.clipboard 缺失时降级到 execCommand', fallbackOk === true && copied.length === 1,
   `ok=${String(fallbackOk)} selected=${copied.length}`)
 
-check('18 项字段齐备（展开全部后抽样）', (() => {
+// 表单共 17 个字段，界面上是 16 个标签（工具名与用途共用「可调用的工具」一行标签）。
+// 缺一个标签就说明某个字段没有任何分组渲染它，而它照样会被构建器读走 —— 那种字段
+// 用户在表单里永远看不到，也就永远改不掉。
+check('17 个字段的 16 个标签齐备（含仅手动模式可见的工具清单）', (() => {
+  const labels = ['身份', '目标', '背景与上下文', '成功标准', '硬性规则', '禁止行为', '调用工具策略',
+    '工具使用策略', '工具失败时的处理', '输出格式说明', '输出格式类型', '语言与语气',
+    '字段级说明', '数据不足时的行为', '少样本示例']
   for (const id of ['rules', 'tools', 'output']) {
     if (instance.getSnapshot().collapsed.includes(id)) instance.actions.toggleSection(id)
   }
-  const all = panel()
-  return ['身份', '目标', '背景与上下文', '成功标准', '硬性规则', '禁止行为', '调用工具策略',
-    '工具使用策略', '工具失败时的处理', '输出格式说明', '输出格式类型', '语言与语气',
-    '字段级说明', '数据不足时的行为', '少样本示例'].every(label => all.html.includes(label))
+  // 工具清单只在手动策略下渲染，因此对那一个标签单独取一次快照。
+  instance.actions.setField('toolPolicy', 'manual')
+  const manualHtml = panel().html
+  instance.actions.setField('toolPolicy', '')
+  const all = panel().html
+  return labels.every(label => all.includes(label))
+    && manualHtml.includes('可调用的工具（工具名 + 用途）')
 })())
 
 if (failed > 0) {
