@@ -194,6 +194,29 @@ check('越界的 output_format 被参数校验拒绝',
   badEnum !== null && /output_format/.test(String(badEnum?.message ?? badEnum)),
   String(badEnum?.message ?? badEnum))
 
+// 参数边界的类型校验：不合规输入必须在边界**报错**而不是静默丢弃 —— 否则模型收到的是
+// "成功"，却拿到一份少了半截约束的提示词（实测 `rules: 'not-an-array'`、`background: 42`、
+// `tool_policy: 'maybe'`、`callable_tools: 'read_log'` 都会被静默丢弃；而数组里混入非字符串
+// 更糟：它会以 `item.trim is not a function` 的形式在构建期崩掉）。
+const boundaryErrors = [
+  { label: 'rules 非数组', args: { role: 'r', goal: 'g', rules: 'not-an-array' }, field: 'rules' },
+  { label: 'rules 含非字符串元素', args: { role: 'r', goal: 'g', rules: ['ok', 7] }, field: 'rules' },
+  { label: 'background 非字符串', args: { role: 'r', goal: 'g', background: 42 }, field: 'background' },
+  { label: 'tool_policy 越界', args: { role: 'r', goal: 'g', tool_policy: 'maybe' }, field: 'tool_policy' },
+  { label: 'callable_tools 非数组', args: { role: 'r', goal: 'g', callable_tools: 'read_log' }, field: 'callable_tools' },
+  { label: 'fields 含非字符串元素', args: { role: 'r', goal: 'g', fields: [null] }, field: 'fields' },
+]
+for (const item of boundaryErrors) {
+  const error = await rejectionOf(() => definition.execute(
+    item.args, { signal: new AbortController().signal },
+  ))
+  // 匹配到「字段名 must be」：只查字段名会撞上子串（`fields` 里含 `field`、`callable_tools`
+  // 里含 `tool`），那样断言会在校验被删掉之后仍然通过。
+  check(`${item.label} 在边界被拒`,
+    error !== null && String(error.message).includes(`${item.field} must be`),
+    String(error?.message ?? error))
+}
+
 // ---- 4) 模板：作默认值，调用参数覆盖 ----
 
 const firstTemplate = TEMPLATES[0]

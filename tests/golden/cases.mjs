@@ -186,4 +186,39 @@ export const CASES = [
       callable_tools: [''],
     },
   },
+  {
+    id: 'tool-full-fields',
+    note: '工具路径：字段名映射的广覆盖（一次给 12 个可选键，含 tool_guidance / tool_failure）',
+    via: 'tool',
+    args: {
+      role: '你是一名负责线上稳定性的 SRE 助手',
+      goal: '根据监控数据判断告警是否需要人工立即介入。',
+      background: '服务于一个日订单量百万级的电商系统。',
+      success_criteria: '每条结论都能指向具体的指标与时间窗口。',
+      rules: ['只能基于工具返回的数据下结论', '所有数值必须带上单位和时间窗口'],
+      forbidden: ['不得引用记忆中其他系统的经验值'],
+      tool_policy: 'auto',
+      tool_guidance: ['先查配置再下判断'],
+      tool_failure: '说明失败原因，不要用默认值代替。',
+      output_format: 'json',
+      language_tone: '简洁直接，中文。',
+      fields: ['severity: "P0" | "P1" | "P2" | "info"'],
+      fallback: '若关键指标缺失，明确说明缺失项。',
+      examples: '输入 A → 输出 B',
+    },
+  },
+  {
+    id: 'tool-template-override-and-blanks',
+    note: '工具路径：模板底座 + 参数覆盖 + 空白回退 + 清单整组，四种语义叠加在同一个产物上',
+    via: 'tool',
+    args: {
+      role: '审计员',
+      goal: '只检查依赖变更。',
+      template: 'alert-triage',
+      rules: [''], // 全空白 → 回退模板的规则
+      tool_policy: 'manual',
+      callable_tools: ['query_metrics: 取指标'], // 整组取参数，覆盖模板的空清单
+      output_format: 'text', // 覆盖模板的 json 骨架
+    },
+  },
 ]
