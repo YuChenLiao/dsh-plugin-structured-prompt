@@ -148,17 +148,44 @@ export function narrowArgs(raw: unknown): NarrowedArgs {
 /**
  * 取「调用参数优先，未给则用模板默认值」的值。
  *
- * 空串与空数组都算「未给」：模板填了 3 条硬性规则时，模型传 `rules: []` 的意图几乎
- * 总是"没额外要求"，而不是"把模板的规则删掉"。
+ * 空串（含纯空白）、空数组、以及**全由空白条目组成的数组**都算「未给」：模板填了 3 条
+ * 硬性规则时，模型传 `rules: []` 或 `rules: ['']` 的意图几乎总是"没额外要求"，而不是
+ * "把模板的规则删掉"。整组判定而不是逐条过滤 —— 逐条过滤会丢掉空串、让工具名与用途的
+ * 索引错位（那些空工具名行的忽略发生在下游，按原始索引处理）。
  * @param provided - 模型传入的值。
  * @param fallback - 模板/空白表单的默认值。
  * @returns 生效的值。
  */
 export function prefer<T>(provided: T | undefined, fallback: T): T {
   if (provided === undefined) return fallback
-  if (typeof provided === 'string' && provided.trim() === '') return fallback
-  if (Array.isArray(provided) && provided.length === 0) return fallback
+  // 字符串侧与数组侧共用同一个「空白」定义：将来改判空规则只需要动 `isBlankItem`。
+  if (isBlankItem(provided)) return fallback
+  if (Array.isArray(provided) && provided.every(isBlankItem)) return fallback
   return provided
+}
+
+/**
+ * 数组条目算不算「空白」。
+ *
+ * 非字符串条目按非空白处理：`prefer` 只负责判断"给没给"，条目怎么处理是下游的事。
+ * @param item - 数组条目。
+ * @returns 字符串且 trim 后为空时为 `true`。
+ */
+function isBlankItem(item: unknown): boolean {
+  return typeof item === 'string' && item.trim() === ''
+}
+
+/**
+ * 一批调用参数条目算不算「给了」。
+ *
+ * 与 `prefer` 共用 {@link isBlankItem}：空数组与全空白条目都算「未给」。导出它是为了让
+ * 必须**整组同进同退**的字段（工具名与用途）复用同一条规则 —— 各自判定会让两个数组
+ * 错位，例如 `[': 用途']` 的工具名为空而用途非空。
+ * @param items - 调用参数里的字符串数组。
+ * @returns 至少有一个非空白条目时为 `true`。
+ */
+export function isProvidedList(items: readonly string[] | undefined): boolean {
+  return items !== undefined && !items.every(isBlankItem)
 }
 
 /**
@@ -173,7 +200,9 @@ export function splitCallableTools(entries: readonly string[]): { tools: string[
   const tools: string[] = []
   const slots: string[] = []
   for (const entry of entries) {
-    const matched = /^([^：:]+)[：:](.*)$/.exec(entry)
+    // 第一组允许为空：条目以冒号开头时得到空工具名，该行随后与其它空工具名行一样被
+    // 整体忽略 —— 否则「:用途」会被当成一个名叫「:用途」的工具写进提示词。
+    const matched = /^([^：:]*)[：:](.*)$/.exec(entry)
     if (matched === null) {
       tools.push(entry.trim())
       slots.push('')

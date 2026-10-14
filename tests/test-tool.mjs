@@ -16,10 +16,17 @@ import { fileURLToPath } from 'node:url'
 const SRC = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'src')
 const toolModule = await import(pathToFileURL(resolve(SRC, 'host', 'tool.ts')).href)
 const prompt = await import(pathToFileURL(resolve(SRC, 'shared', 'prompt.ts')).href)
-const { completeForm } = await import(pathToFileURL(resolve(SRC, 'shared', 'forms.ts')).href)
+const { completeForm, createEmptyForm } = await import(
+  pathToFileURL(resolve(SRC, 'shared', 'forms.ts')).href
+)
 const { TEMPLATES } = await import(pathToFileURL(resolve(SRC, 'shared', 'templates.ts')).href)
 const { resolveProviderName, runForeground } = await import(
   pathToFileURL(resolve(SRC, 'host', 'subagents.ts')).href
+)
+// 参数边界与纯构建：多处断言直接调用它们，所以在文件顶部 import。
+const argsModule = await import(pathToFileURL(resolve(SRC, 'host', 'args.ts')).href)
+const { buildFromArgs, resolveCallableTools } = await import(
+  pathToFileURL(resolve(SRC, 'host', 'build.ts')).href
 )
 
 /** 一个立即 settle 的假子代理运行。 */
@@ -37,6 +44,27 @@ function fakeSubagents(makeRun) {
     list: () => ['only'],
     getProvider: name => (name === 'only' ? { name } : undefined),
     start: async () => makeRun(),
+  }
+}
+
+/**
+ * 同上，但把每次 `start()` 的请求记下来。
+ *
+ * 用来断言"传给子代理的东西"（标签、取消信号）—— 只看返回值无法区分默认值与传入值。
+ * @param record - 收集 `{ name, request }` 的数组。
+ * @returns 假子代理服务。
+ */
+function recordingSubagents(record) {
+  return {
+    list: () => ['only'],
+    getProvider: name => (name === 'only' ? { name } : undefined),
+    start: async (name, request) => {
+      record.push({ name, request })
+      return fakeRun('child-rec', {
+        output: [{ type: 'text', text: 'ok' }],
+        stopReason: 'completed',
+      }, () => {})
+    },
   }
 }
 
@@ -366,6 +394,105 @@ check('render 仍走委托分支', silentRender.includes('Delegated to a subagen
 check('render 不把提示词灌回上下文', !silentRender.includes('审查本次改动'))
 check('render 说明子代理没有文本输出', silentRender.includes('no text output'))
 
+// `delegate.label` 为空串或纯空白时按「未给」处理，与参数边界的其它字段一致 —— 空串
+// 不该变成子代理的空标签。这一条要用记录请求的假服务才看得见：返回值里根本没有 label。
+const recorded = []
+const recordedService = () => toolModule.createStructuredPromptTool({
+  tools: { register: () => () => {} },
+  get: name => (name === 'subagents' ? recordingSubagents(recorded) : undefined),
+})
+/**
+ * 跑一次委托，返回传给子代理的标签。
+ *
+ * 取最后一次记录（而不是固定下标）：将来在中间插入用例时不会错位成假失败。
+ * @param delegate - delegate 参数。
+ * @returns 子代理收到的 label。
+ */
+const labelSentToChild = async (delegate) => {
+  await recordedService().execute(
+    { role: 'r', goal: 'g', delegate },
+    { signal: new AbortController().signal, agent: { id: 'agent' } },
+  )
+  return recorded.at(-1)?.request.label
+}
+check('delegate.label 为空串时回退到默认标签',
+  (await labelSentToChild({ label: '' })) === toolModule.STRUCTURED_PROMPT_TOOL)
+check('delegate.label 为纯空白时也回退到默认标签',
+  (await labelSentToChild({ label: '   ' })) === toolModule.STRUCTURED_PROMPT_TOOL)
+check('显式 label 原样传给子代理（不 trim，标签是展示用的）',
+  (await labelSentToChild({ label: '  review  ' })) === '  review  ')
+
+// ---- 6d) 「未给」只有一条判定，且工具名与用途整组同进同退 ----
+//
+// 判定在 `prefer` / `isProvidedList` 里（共用同一个 `isBlankItem`）。用能观测的字段锁住
+// 它：若判定退回"只看数组长度"，`rules: ['']` 会把模板的规则整组清掉。工具清单那条不变量
+// 在产物上不可观测（内置模板都不带清单），所以直接测选清单的纯函数。
+const blankRules = (() => {
+  const base = { role: 'r', goal: 'g', template: 'code-review' }
+  return {
+    none: buildFromArgs(argsModule.narrowArgs(base)).prompt,
+    blank: buildFromArgs(argsModule.narrowArgs({ ...base, rules: [''] })).prompt,
+  }
+})()
+check('全空白的 rules 与未给等价（模板规则不被清掉）', blankRules.blank === blankRules.none)
+
+// 两个判空入口必须同源：一个回退时另一个必须判为「未给」，否则将来改规则只会生效一半。
+const SENTINEL = ['<fallback>']
+check('prefer 与 isProvidedList 的判空同源',
+  [undefined, [], [''], ['   '], ['', 'a'], [': x'], ['a']].every(items =>
+    (argsModule.prefer(items, SENTINEL) === SENTINEL) === !argsModule.isProvidedList(items)))
+
+// 带清单的底座：四套内置模板都不带，只能在这里构造（理由见 `resolveCallableTools`）。
+const baseWithList = { ...createEmptyForm(), callableTools: ['base_tool'], toolSlots: ['底座用途'] }
+/**
+ * 选定生效的工具清单。
+ * @param entries - `callable_tools` 的原始取值。
+ * @returns `{ callableTools, toolSlots }`。
+ */
+const resolveTools = (entries) => resolveCallableTools(
+  entries, argsModule.splitCallableTools(entries ?? []), baseWithList,
+)
+check('未给清单时两个字段都回退底座',
+  resolveTools(undefined).callableTools.join() === 'base_tool'
+  && resolveTools(undefined).toolSlots.join() === '底座用途')
+check('全空白清单整组回退底座',
+  resolveTools(['  ']).callableTools.join() === 'base_tool'
+  && resolveTools(['  ']).toolSlots.join() === '底座用途')
+check('拆分后工具名为空时仍整组取调用参数（用途不会回到别的工具上）',
+  resolveTools([': 用途']).callableTools.join() === ''
+  && resolveTools([': 用途']).toolSlots.join() === '用途',
+  JSON.stringify(resolveTools([': 用途'])))
+check('给了有效工具时两个字段都取调用参数',
+  resolveTools(['a: p']).callableTools.join() === 'a'
+  && resolveTools(['a: p']).toolSlots.join() === 'p')
+check('每套内置模板的工具名与用途等长（将来给模板加清单时的第一道防线）',
+  TEMPLATES.every((template) => {
+    const built = template.build()
+    return built.callableTools.length === built.toolSlots.length
+  }))
+
+/**
+ * 取提示词里「工具使用策略」段的内容。
+ * @param text - 提示词全文。
+ * @returns 该段正文；没有这一段时为空串。
+ */
+const toolPolicySection = (text) => (text.split('\n# 工具使用策略\n')[1] ?? '').split('\n# ')[0] ?? ''
+// 下游：以冒号开头的条目（工具名为空）必须整行忽略，否则会写出一个名叫「: 拉取指标」的
+// 工具。断言只看策略段，避免被其它段落里的同名字样代偿。
+const colonEntry = await run({ goal: 'g', tool_policy: 'manual', callable_tools: [': 拉取指标'] })
+check('冒号开头的条目不出现在产物里', !toolPolicySection(colonEntry.prompt).includes('拉取指标'))
+const mixedTools = await run({
+  goal: 'g', tool_policy: 'manual', callable_tools: [': 用途', 'read_log: 读日志'],
+})
+check('空工具名的行被忽略、同组其它行的用途仍然配对',
+  toolPolicySection(mixedTools.prompt).includes('- read_log：读日志')
+  && !toolPolicySection(mixedTools.prompt).includes('用途'),
+  toolPolicySection(mixedTools.prompt))
+// 守卫对象是下游「没有有效工具就不产出策略头」这条短路，不是判空本身。
+const blankTools = await run({ goal: 'g', tool_policy: 'manual', callable_tools: [''] })
+check('全空白的 callable_tools 不产生策略行',
+  !toolPolicySection(blankTools.prompt).includes('只允许调用下列已指定的工具'))
+
 // 未知模板 id 必须报错：静默降级成空白底座会产出一份短得多的提示词而无人察觉。
 check('未知 template 被拒（拼错时不再静默降级）',
   (await rejectionOf(() => run({ goal: 'g', template: 'code-reviw' }))) !== null)
@@ -382,11 +509,9 @@ check('tool_policy 空串被当作未给',
 //
 // 只断言"某个函数名不存在"太弱：换个名字写回来照样通过。所以再加一条**行为**断言：
 // 同一组状态经 host 与经客户端路径必须产出逐字相同。
-const argsModule = await import(pathToFileURL(resolve(SRC, 'host', 'args.ts')).href)
 check('host 侧不再有独立的格式骨架实现', argsModule.resolveOutputSpec === undefined)
 
 const { applyFormatChoice } = await import(pathToFileURL(resolve(SRC, 'shared', 'format.ts')).href)
-const { buildFromArgs } = await import(pathToFileURL(resolve(SRC, 'host', 'build.ts')).href)
 const reportTemplate = TEMPLATES.find(item => item.id === 'report')
 const hostVsClient = (() => {
   const fromHost = buildFromArgs(argsModule.narrowArgs({

@@ -168,4 +168,22 @@ export const CASES = [
       output_spec: '以 TOML 输出，键为 summary。',
     },
   },
+  {
+    id: 'tool-blank-rules-fall-back',
+    note: '工具路径：全空白的 rules 算「未给」，模板的规则不被清掉（与 rules: [] 同一条规则）',
+    via: 'tool',
+    args: { role: '审计员', goal: '只检查依赖变更。', template: 'code-review', rules: [''] },
+  },
+  {
+    id: 'tool-blank-list-falls-back',
+    note: '工具路径：全空白的工具清单算「未给」（整组回退底座，且不产出空转的策略行）',
+    via: 'tool',
+    args: {
+      role: '分析员',
+      goal: '汇总数据。',
+      template: 'report',
+      tool_policy: 'manual',
+      callable_tools: [''],
+    },
+  },
 ]

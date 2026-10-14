@@ -13,7 +13,7 @@
  * profile 的 node_modules 解析，而 link 经 junction 加载后 ESM 会 realpath 到源码目录，
  * 那里没有任何 node_modules。
  */
-import { narrowArgs } from './args.js'
+import { narrowArgs, prefer } from './args.js'
 import { buildFromArgs } from './build.js'
 import type { StructuredPromptValue } from './build.js'
 import { TOOL_DESCRIPTION, TOOL_OUTPUT_SCHEMA, TOOL_PARAMETERS_SCHEMA } from './parameters.js'
@@ -185,7 +185,8 @@ export function createStructuredPromptTool(ctx?: HostPluginContext): ToolDefinit
         subagents,
         providerName,
         built.prompt,
-        delegate.label ?? STRUCTURED_PROMPT_TOOL,
+        // 空串与纯空白都按「未给」处理，与参数边界的其它字段走同一条规则（`prefer`）。
+        prefer(delegate.label, STRUCTURED_PROMPT_TOOL),
         exec.agent,
         exec.signal,
       )
