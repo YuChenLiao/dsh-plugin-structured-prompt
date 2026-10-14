@@ -2,7 +2,7 @@
   "name": "dsh-plugin-structured-prompt-build",
   "private": true,
   "type": "module",
-  "description": "本插件的构建入口：复用 DSH 源码树里已有的 tsdown，避免为插件单独引入打包依赖。",
+  "description": "本插件的构建与验证脚本，两个 script 都要在 tools/ 目录下执行（npm 的 cwd 是 package.json 所在目录）：node lib/build.mjs 复用 DSH 源码树里已有的 tsdown，避免为插件单独引入打包依赖；node run-tests.mjs 跑八套验证。仓库根的等价用法见 README。",
   "scripts": {
     "build": "node lib/build.mjs",
     "test": "node run-tests.mjs"

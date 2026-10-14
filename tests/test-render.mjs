@@ -247,6 +247,9 @@ check('底部操作栏含全部操作控件',
  * @returns 发送按钮的开标签（找不到时为空串）。
  */
 const sendTagOf = (html) => /<button[^>]*>发送<\/button>/.exec(html)?.[0] ?? ''
+/** 同一个正则的命中数：多一个「发送」按钮就会让上面的定位取到错的那个。 */
+const sendTagCount = (html) => (html.match(/<button[^>]*>发送<\/button>/g) ?? []).length
+check('页面上只有一个「发送」按钮', sendTagCount(filled.html) === 1, String(sendTagCount(filled.html)))
 check('成稿就绪时发送按钮可用',
   sendTagOf(filled.html).includes('title="把提示词投递进当前会话"')
   && !sendTagOf(filled.html).includes('disabled'),
@@ -293,23 +296,35 @@ globalThis.document = originalDoc
 check('navigator.clipboard 缺失时降级到 execCommand', fallbackOk === true && copied.length === 1,
   `ok=${String(fallbackOk)} selected=${copied.length}`)
 
-// 表单共 17 个字段，界面上是 16 个标签（工具名与用途共用「可调用的工具」一行标签）。
-// 缺一个标签就说明某个字段没有任何分组渲染它，而它照样会被构建器读走 —— 那种字段
-// 用户在表单里永远看不到，也就永远改不掉。
-check('17 个字段的 16 个标签齐备（含仅手动模式可见的工具清单）', (() => {
-  const labels = ['身份', '目标', '背景与上下文', '成功标准', '硬性规则', '禁止行为', '调用工具策略',
-    '工具使用策略', '工具失败时的处理', '输出格式说明', '输出格式类型', '语言与语气',
-    '字段级说明', '数据不足时的行为', '少样本示例']
+// 17 个字段必须各自有 DOM 锚点。只匹配分组标签文本是不够的 —— 预览区会渲染提示词
+// 正文与逐段占用，正文里的「# 身份」「# 硬性规则」等字样会让子串命中，于是"某个字段
+// 没有任何控件"这种缺陷照样能过（实测：三个分组折叠、只填身份与目标时也能命中）。
+// 所以逐字段定位到它自己的控件：单值字段看 aria-label，逐条字段先补一条空条目再看
+// 带序号的 aria-label，两个枚举字段看各自独有的 chip —— 这些锚点都无法被预览代偿。
+check('17 个字段各自有 DOM 锚点（展开全部分组）', (() => {
   for (const id of ['rules', 'tools', 'output']) {
     if (instance.getSnapshot().collapsed.includes(id)) instance.actions.toggleSection(id)
   }
-  // 工具清单只在手动策略下渲染，因此对那一个标签单独取一次快照。
+  // 逐条字段在空数组下不渲染任何控件，先各补一条才谈得上"有没有控件"。
+  for (const key of ['rules', 'forbidden', 'toolGuidance', 'fields']) {
+    if (instance.getSnapshot().form[key].length === 0) instance.actions.addItem(key, '')
+  }
   instance.actions.setField('toolPolicy', 'manual')
-  const manualHtml = panel().html
-  instance.actions.setField('toolPolicy', '')
-  const all = panel().html
-  return labels.every(label => all.includes(label))
-    && manualHtml.includes('可调用的工具（工具名 + 用途）')
+  if (instance.getSnapshot().form.callableTools.length === 0) instance.actions.addTool()
+  const html = panel().html
+  const hasLabel = label => html.includes(`aria-label="${label}"`)
+  // 单值字段，以及手动模式下按索引配对的两个工具字段，都用 aria-label 定位。
+  const labeled = ['身份', '目标', '背景与上下文', '成功标准', '工具失败时的处理',
+    '输出格式说明', '语言与语气', '数据不足时的行为', '少样本示例',
+    '第 1 个工具名', '第 1 个工具的用途']
+  // 逐条字段的控件名是「字段标签 + 第 N 条」，标签文本取自 `ui/config.ts`。
+  const listed = ['硬性规则（每行一条，会按 1. 2. 3. 编号） 第 1 条',
+    '禁止行为（每行一条） 第 1 条', '工具使用策略（每行一条） 第 1 条',
+    '字段级说明（每行一条） 第 1 条']
+  // 「输出格式类型」与「调用工具策略」是 chip 组，没有 aria-label，用独有的选项定位。
+  return [...labeled, ...listed].every(hasLabel)
+    && html.includes('>手动（指定要调用的工具）</button>')
+    && html.includes('>纯文本</button>')
 })())
 
 if (failed > 0) {

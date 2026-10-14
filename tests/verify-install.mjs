@@ -83,8 +83,8 @@ if (existsSync(hostEntry)) {
     // 自包含约束（见 README「为什么工具定义是手写的」）：import 任何宿主包都会让
     // link: 安装下的插件停在未激活状态 —— 模块加载失败，而且不报错。
     const hostText = readFileSync(hostEntry, 'utf8')
-    // 动态 `import(...)` 与静态 import 一样会在加载期解析宿主包，必须一起挡住：
-    // 单看行首的 import 会漏掉 `await import('@deepseek-ai/dsh-tools')` 这种写法。
+    // 动态 `import()` 不会在链接期失败（那时它还没执行），但同样会在执行到它时解析
+    // 宿主包 —— 失败时机更晚、更难定位，因此一并挡住，而不是只挡行首的静态 import。
     check('host 产物自包含（无 import / require）',
       !/^\s*import[\s{'"]/m.test(hostText)
       && !/\bimport\s*\(/.test(hostText)
