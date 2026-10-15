@@ -1,8 +1,8 @@
 {
   "name": "dsh-plugin-structured-prompt",
-  "version": "0.2.4",
+  "version": "0.3.0",
   "private": true,
-  "description": "DSH 结构化提示词插件：输入框里的结构化提示词表单（身份/目标/硬性规则/工具策略/输出格式/兜底/示例），并把同一套构建器注册为模型可调用的工具（可选用模板起步、可选直投子代理），模板库数据在 src/shared/templates.json",
+  "description": "DSH 结构化提示词插件：输入框里的结构化提示词表单（身份/目标/硬性规则/工具策略/输出格式/兜底/示例），并把同一套构建器注册为模型可调用的工具（可选用模板起步、可选直投子代理）；另有提示词库入口，检索 prompts.chat 上的公开提示词并预览发送（不经过构建器）。模板库数据在 src/shared/templates.json",
   "type": "module",
   "main": "lib/index.js",
   "exports": {
