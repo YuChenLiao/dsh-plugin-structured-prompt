@@ -38,7 +38,7 @@ if (existsSync(installed)) {
   check('依赖指向本插件（link 本目录或 github 源）',
     linkedHere || spec.startsWith('github:'), spec)
   check('装到的包含 client 产物', existsSync(join(installed, 'lib', 'client.js')))
-  check('装到的包含 host 产物', existsSync(join(installed, 'lib', 'index.js')))
+  check('装到的包含 host 产物', existsSync(join(installed, 'lib', 'structured.js')))
   check('装到的包不含 node_modules（否则会破坏 pnpm 安装）',
     !existsSync(join(installed, 'node_modules')))
   // 本工作区不再有 node_modules：见 tools/setup-dev-links.mjs 的说明。
@@ -70,9 +70,10 @@ const patchFile = resolve(PLUGIN_ROOT, 'cordis.patch.yml')
 check('插件自带 bundle patch 文件', existsSync(patchFile))
 if (existsSync(patchFile)) {
   const patchText = readFileSync(patchFile, 'utf8')
-  // 组件拆分后是**两条**装载行，各自指向一个组件入口；只断言包名的旧写法会漏掉新的一条。
-  check('patch 声明了两个组件的装载行',
-    patchText.includes(`name: ${PLUGIN_ID}/structured`)
+  // 两条装载行：一条用**精确包名**（它是 client 半边的宿主），一条用子路径指向提示词库组件。
+  // 精确包名那条的 `name` 就是 `PLUGIN_ID` 本身，所以这里不能只查子路径写法。
+  check('patch 声明了两条装载行（结构化 + 提示词库）',
+    new RegExp(`name:\\s*${PLUGIN_ID}\\s*$`, 'm').test(patchText)
     && patchText.includes(`name: ${PLUGIN_ID}/library`),
     patchText.split('\n').filter(line => line.includes('name:')).map(line => line.trim()).join(' | '))
 }
@@ -90,16 +91,21 @@ for (const component of ['structured', 'library']) {
   check(`exports 提供组件入口 ./${component} → lib/${component}.js`,
     target === `./lib/${component}.js`, String(target) || '(缺失)')
 }
-for (const file of ['index.js', 'structured.js', 'library.js']) {
+for (const file of ['structured.js', 'library.js']) {
   check(`exports 指向的产物真实存在（lib/${file}）`,
     existsSync(resolve(PLUGIN_ROOT, 'lib', file)))
 }
-check('装载行的 name 都落在 exports 的组件入口上', (() => {
+check('包名入口指向 structured 产物（包名行同时是 client 半边的宿主）',
+  componentExports['.']?.default === './lib/structured.js',
+  String(componentExports['.']?.default ?? '(缺失)'))
+check('装载行的 name 都落在 exports 的入口上', (() => {
   if (!existsSync(patchFile)) return false
   const names = [...readFileSync(patchFile, 'utf8').matchAll(/^\s*name:\s*(\S+)\s*$/gm)]
     .map(match => match[1])
-  // 恰好两条，且每条都是 `<包名>/<组件>`，那个组件在 exports 里有对应的产物路径。
-  return names.length === 2 && names.every((name) => {
+  // 恰好两条：一条是精确包名（走 exports['.']），另一条是 `<包名>/<组件>`（走 exports['./<组件>']）。
+  if (names.length !== 2) return false
+  return names.every((name) => {
+    if (name === PLUGIN_ID) return componentExports['.']?.default === './lib/structured.js'
     const prefix = `${PLUGIN_ID}/`
     if (!name.startsWith(prefix)) return false
     const component = name.slice(prefix.length)
@@ -112,13 +118,39 @@ check('装载行的 name 都落在 exports 的组件入口上', (() => {
   return `patch=${names.join(', ') || '(无)'} exports=${Object.keys(componentExports).join(', ')}`
 })())
 
-// 4) host 产物：三个入口都可导入、都导出 apply，且都自包含
+// 3c) **恰有一条装载行用精确包名** —— client 半边只认它。
 //
-// 组件拆分后 host 侧有三个产物：聚合入口 + 两个组件入口。三者各自内联自己的实现，所以
-// "零 import" 这条约束必须逐个断言 —— 只查一个会把另一个漏掉。
+// DSH 的 client 模块系统按「Loader 条目里声明了 `dsh.client` 的包」组 graph，取包名用的是
+// `exactPackageSpecifier`：它对**含 `/` 的 specifier** 返回 `undefined`，那一行于是不被当成
+// client row（见 DSH 源码 `packages/client/modules/src/client/manifest.ts` 的同名函数）。
+// 两条装载行都写成包子路径时，client bundle **一次都不会加载** —— 界面上两个入口一起消失，
+// 而本机所有测试都是绿的（它们只查注册与产物，不查 DSH 的解析规则）。这条断言就是那次事故的守护。
+const rowNames = existsSync(patchFile)
+  ? [...readFileSync(patchFile, 'utf8').matchAll(/^\s*name:\s*(\S+)\s*$/gm)].map(match => match[1])
+  : []
+/**
+ * 与 DSH 的 `exactPackageSpecifier` 同源：裸包名（含 `@scope/name`）才算，子路径不算。
+ * @param name - 装载行的 `name`。
+ * @returns 是否是精确包名。
+ */
+const isBarePackageName = (name) => {
+  if (name.startsWith('@')) {
+    const parts = name.split('/')
+    return parts.length === 2 && parts.every(Boolean)
+  }
+  return name.length > 0 && !name.includes('/') && !name.includes(':')
+}
+const bareRows = rowNames.filter(isBarePackageName)
+check('恰有一条装载行用精确包名（client 半边靠它加载；两条都写子路径会让界面入口全消失）',
+  bareRows.length === 1 && bareRows[0] === PLUGIN_ID,
+  `装载行=${rowNames.join(', ') || '(无)'} 精确包名=${bareRows.join(', ') || '(无)'}`)
+
+// 4) host 产物：两个组件入口都可导入、都导出 apply，且都自包含
+//
+// 包名入口**就是**结构化组件的产物（`exports['.']` → `lib/structured.js`），不再有单独的聚合
+// 产物 —— 包名行同时承担"加载 client 半边"的职责，所以它必须是一个真实的组件入口。
 const HOST_ENTRIES = [
-  { file: 'index.js', label: '聚合入口' },
-  { file: 'structured.js', label: '结构化组件' },
+  { file: 'structured.js', label: '结构化组件（也是包名入口与 client 半边的宿主）' },
   { file: 'library.js', label: '提示词库组件' },
 ]
 for (const entry of HOST_ENTRIES) {

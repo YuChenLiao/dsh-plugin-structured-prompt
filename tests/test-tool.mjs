@@ -748,7 +748,9 @@ check('指定未注册的 provider 时报错并列出候选',
   String(unknownConfigured?.message ?? unknownConfigured))
 
 // 入口把配置交给注册面；不合法配置要在装载期就失败，而不是静默用默认策略跑起来。
-const applyModule = await import(pathToFileURL(resolve(SRC, 'index.ts')).href)
+const applyModule = await import(
+  pathToFileURL(resolve(SRC, 'components', 'structured', 'index.ts')).href
+)
 const appliedTools = []
 applyModule.apply(
   { tools: { register: tool => { appliedTools.push(tool); return () => {} } } },
@@ -1344,15 +1346,32 @@ const applyConnection = {
     },
   },
 }
+// 两个组件入口各自的 apply 面：结构化组件装工具、**不**碰路由；提示词库组件装路由、**不**碰工具
+// —— 这正是拆分的意义所在，所以两条分别断言（以前是聚合入口一条通吃）。
+const structuredApplyRoutes = []
+const structuredConnection = {
+  fetch: { register: (route) => { structuredApplyRoutes.push(route); return async () => {} } },
+}
 applyModule.apply(
   {
-    ...hostCtx(applyConnection),
+    ...hostCtx(structuredConnection),
     tools: { register: tool => { appliedTools.push(tool); return () => {} } },
   },
   { provider: 'fork' },
 )
-check('apply 在 connection 就绪时一并注册检索路由（经 ctx.inject）',
-  applyRoutes.length === 2, String(applyRoutes.length))
+check('结构化组件入口只装工具，不注册检索路由',
+  structuredApplyRoutes.length === 0, String(structuredApplyRoutes.length))
+
+const libraryApplyRoutes = []
+const libraryConnection = {
+  fetch: { register: (route) => { libraryApplyRoutes.push(route); return async () => {} } },
+}
+const libraryEntry = await import(
+  pathToFileURL(resolve(SRC, 'components', 'library', 'index.ts')).href
+)
+libraryEntry.apply(hostCtx(libraryConnection), { libraryBaseUrl: 'https://host/sub' })
+check('提示词库组件入口注册两条路由（经 ctx.inject），且不需要 tools',
+  libraryApplyRoutes.length === 2, String(libraryApplyRoutes.length))
 
 if (failed > 0) {
   console.error(`\n${failed} 项工具测试未通过。`)

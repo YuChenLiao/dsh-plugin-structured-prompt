@@ -277,8 +277,9 @@ node --import file:///D:/dsh/deepseek-harness/node_modules/tsx/dist/loader.mjs `
 单文件不超过 **260 行**、客户端入口不超过 **140 行**（都由 `tests/verify-install.mjs` 断言），入口只做装配：
 
 ```text
-src/index.ts                          host 聚合入口：装配两个组件（单条装载行的写法）
 src/client/index.ts                   client 聚合入口：槽位注册 + 样式注入（无 UI 实现）
+                                      （**包名入口没有单独的源文件**：它就是 structured 组件入口 ——
+                                       client 半边只认精确包名的装载行，见下文「产物契约」）
 src/components/                       两个组件各自成目录（形态参考 dsh-ops）
   structured/                         结构化提示词：表单 + 模型可调用的工具
     index.ts                          组件 host 入口：inject(['tools']) / Config / apply
@@ -379,7 +380,8 @@ window.__ModuleLoader__.load({ id: 'dsh-plugin-structured-prompt', factory: requ
 ```
 
 - `react` 与 `@deepseek-ai/dsh-client-store` 走注入的 `require`（模块表提供），其余依赖内联；
-- host 侧有**三个**产物：`lib/index.js`（聚合入口）、`lib/structured.js`、`lib/library.js`（两个组件入口）。三者各自内联自己的实现，因此**每一个都必须零 import**（见「为什么工具定义是手写的」）—— `tests/verify-install.mjs` 逐个断言，只查一个会把另一个漏掉。`lib/structured.js` 只注册模型可调用的工具 `build_structured_prompt`（`inject: ['tools']`）；`lib/library.js` 只注册提示词库的两条路由（`inject: []`），用的是全局 `fetch` 与 `Response`，这条网络能力因此没有破坏自包含约束 —— 路由**不在** `lib/structured.js` 里，两个组件的产物边界由 `tests/verify-install.mjs` 与工具套逐个核对。
+- host 侧有**两个**产物：`lib/structured.js`（结构化组件，同时是**包名入口**）与 `lib/library.js`（提示词库组件）。两者各自内联自己的实现，因此**每一个都必须零 import**（见「为什么工具定义是手写的」）—— `tests/verify-install.mjs` 逐个断言，只查一个会把另一个漏掉。前者只注册工具 `build_structured_prompt`（`inject: ['tools']`）；后者只注册提示词库的两条路由（`inject: []`），用的是全局 `fetch` 与 `Response`，这条网络能力因此没有破坏自包含约束 —— 路由**不在** `lib/structured.js` 里，两个组件的产物边界由 `tests/verify-install.mjs` 与工具套逐个核对。
+- **client 半边只认「精确包名」的装载行**（这一条是踩出来的，务必保留）：DSH 的 client 模块系统按「Loader 条目里声明了 `dsh.client` 的包」组 graph，取包名用的是 `exactPackageSpecifier` —— 它对**含 `/` 的 specifier** 返回 `undefined`，那一行于是不被当成 client row（见 DSH 源码树里 `packages/client/modules` 的那个同名函数）。所以 `cordis.patch.yml` 里**必须恰有一条** `name` 是裸包名。两条都写成包子路径（`…/structured` 与 `…/library`）时，client bundle 一次都不会加载：界面上两个入口**一起消失**，而本机所有测试都是**绿的**（它们只查注册与产物，不查 DSH 的解析规则）。`tests/verify-install.mjs` 现在有一条「恰有一条装载行用精确包名」的断言守着它。
 - **提示词库的路由走可选服务**：`ctx.get('connection')`，**不写进 `inject`**（`lib/library.js` 的 `inject` 是空数组）。理由与 `delegate` 走 `ctx.get('subagents')` 相同 —— 没有 web 载体的组装里，本插件仍要能提供"构建提示词"的能力；把可选能力写成硬依赖会让整个组件在那些组装里不激活。没有 `connection`（或没有 `effect` 面，无法保证释放）时只跳过路由注册，其余能力不变。
 
 ## 架构

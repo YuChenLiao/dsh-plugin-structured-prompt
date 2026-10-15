@@ -43,7 +43,6 @@ const BASELINE_MODULES = [
 
 /** host 侧入口：源码路径 → 产物文件名。 */
 const HOST_ENTRIES = [
-  { source: 'src/index.ts', output: 'index.js', suffix: 'host' },
   { source: 'src/components/structured/index.ts', output: 'structured.js', suffix: 'structured' },
   { source: 'src/components/library/index.ts', output: 'library.js', suffix: 'library' },
 ]

@@ -19,7 +19,7 @@
 - insert:
     # 结构化提示词：表单 + 模型可调用的工具（可选直投子代理）。
     - id: dsh-plugin-structured-prompt
-      name: dsh-plugin-structured-prompt/structured
+      name: dsh-plugin-structured-prompt
       # 可选配置：默认用哪个子代理 provider。不写＝内建默认（spawn，存在时）。
       # base bundle 同时注册 spawn 与 fork，装第三方 provider 的 profile 可用它改默认；
       # 调用参数 `delegate.provider` 仍然优先。

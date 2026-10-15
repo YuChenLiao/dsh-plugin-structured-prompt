@@ -144,15 +144,51 @@ src/client/ui/{theme,styles,config,actions,
 `provider: 42` 走包名装载行与走组件装载行的报错**时机与类型一致**（都是装载期 `ValidationError`），
 不再退化成 `apply` 期抛错。
 
+## 真实环境暴露的错：client 半边只认「精确包名」
+
+上面「尚未验证」里的第一条，在维护者重启 DSH 之后**立刻暴露了**：界面上两个入口一起消失。
+
+诊断（读 DSH 源码，不猜）：client 半边由 `packages/client/modules/src/index.ts` 组成 graph，它按「Loader
+条目里声明了 `dsh.client` 的**包**」扫描，取包名用的是 `packages/client/modules/src/client/manifest.ts` 的
+`exactPackageSpecifier`：
+
+```ts
+/** The bare package-root specifier `specifier` names, or undefined for a subpath, a path, or any scheme-qualified specifier. */
+export function exactPackageSpecifier(specifier: string): string | undefined {
+  return specifier.length > 0 && !specifier.includes('/') && !specifier.includes(':') ? specifier : undefined
+}
+```
+
+它对**含 `/` 的 specifier 返回 `undefined`**，而 `locatePkgJson` 拿到 `undefined` 就直接 `return undefined`
+—— 那一行**不是 client row**。我把两条装载行都写成了包子路径（`dsh-plugin-structured-prompt/structured`
+与 `…/library`），于是 client bundle **一次都没加载**。
+
+**这是本批最该记的一次失败，因为它零红通过**：`verify-install` 查的是"产物存在、零 import、导出面"，
+`test-registration` 查的是"注册了什么"，它们都不知道 DSH 怎么把条目解析成包。上一轮审查也没抓到 ——
+它审的是我的断言与实现，而这条规则在 DSH 那边。**离线测试能覆盖"我注册了什么"，覆盖不了"宿主怎么
+解读我的声明"。**
+
+修法（保住组件化的价值，同时满足这条硬约束）：
+
+- **恰有一条装载行用精确包名**，它同时承担"加载 client 半边"的职责；
+- 那条包名行直接指向结构化组件的产物（`exports['.']` → `./lib/structured.js`），因此**不再需要**单独的
+  聚合入口 —— `src/index.ts` 与 `lib/index.js` 一并删除；
+- 另一条保留子路径（`…/library`），它是 host-only 的：不会被当成 client row，但照常装载提示词库组件，
+  仍可单独 `disabled`、单独配置；
+- host 产物因此从三个变回两个（`structured.js` / `library.js`），`verify-install` 的逐产物断言同步。
+
+**新增的守护**：`verify-install` 里一条「恰有一条装载行用精确包名」的断言，判定逻辑与 DSH 的
+`exactPackageSpecifier` 同源（含 `@scope/name` 的规则）。它正是那次事故的守护 —— 反着验证：把
+`cordis.patch.yml` 那行的 `name` 改回 `…/structured`（两条都成子路径）会把它打红。
+
 ## 尚未验证（需要真实 DSH）
 
-- 两条装载行在真实 DSH 里的装载：`dsh-plugin-structured-prompt/structured` 与 `.../library` 是否都被
-  Loader 解析到（要重启 DSH；运行中的实例早于本批产物）。
+- ~~两条装载行在真实 DSH 里的装载~~ → **已验证，并因此暴露了上面那个错**；按新写法重启后需要再确认一次。
 - client 侧两个组件在**同一个 bundle** 内的共存：同一个槽位有两条注册时，渲染顺序与两个按钮的实际排布
   （`order` 20/21 与 10/11）需要肉眼确认一次；两个弹窗"可同时打开"的实际观感（两层遮罩）也要看一眼。
-- 这两条都是"重启后看界面"一分钟能确认的事，但**在本批的自动化范围内无法断言**：离线测试只能断言
-  "注册了什么"，不能断言"渲染器怎么排"。而样式那条阻断恰好说明了这个边界的代价 —— 它是由真实浏览器
-  发现的，不是测试。
+- 这些都属于"重启后看界面"一分钟能确认的事，但**在本批的自动化范围内无法断言**：离线测试只能断言
+  "注册了什么"，不能断言"宿主怎么解读声明、渲染器怎么排"。这一批在这条边界上栽了两次 —— 样式那次是
+  真实浏览器发现的，这次是真实宿主发现的。
 
 ## 审查记录
 
