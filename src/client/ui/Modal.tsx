@@ -9,12 +9,14 @@
  *
  * （第三条不变量在 `styles.ts`：分组容器既不裁剪也不压缩。）
  *
+ * 内容区顶部在套用模板时多一条场景条（`data-applied-template`）：它是**界面陈述**，不参与提示词构建 —— 成稿只由 `form` 决定。
+ *
  * 主要动作是「复制」（成稿进剪贴板）与「发送」（把成稿投递进当前会话）；不提供
  * 「同步并返回」这类中间态 —— 要么复制走，要么直接发出去。
  */
 import { useEffect, useRef, useState } from 'react'
 import type { ChangeEvent, ReactNode } from 'react'
-import type { PromptForm } from '../../shared/types.js'
+import type { PromptForm, PromptTemplate } from '../../shared/types.js'
 import type { FormActions } from './actions.js'
 import { SmallButton } from './base.js'
 import { CollapsibleSection } from './CollapsibleSection.js'
@@ -47,6 +49,8 @@ export interface StructuredPromptModalProps {
   form: PromptForm
   /** 已折叠的分组 id。 */
   collapsed: readonly string[]
+  /** 当前表单套用的模板；未套用或解析不到时为 `undefined`（id → 模板的解析在容器里做）。 */
+  applied: PromptTemplate | undefined
   /** store 动作。 */
   actions: FormActions
   /** 关闭弹窗。 */
@@ -57,11 +61,11 @@ export interface StructuredPromptModalProps {
 
 /**
  * 表单弹窗。
- * @param props - 表单、折叠状态、动作与回调。
+ * @param props - 表单、折叠状态、套用标记、动作与回调。
  * @returns 弹窗元素。
  */
 export function StructuredPromptModal({
-  form, collapsed, actions, onClose, onSend,
+  form, collapsed, applied, actions, onClose, onSend,
 }: StructuredPromptModalProps): ReactNode {
   const [notice, setNotice] = useState<Notice | null>(null)
   const importRef = useRef<HTMLInputElement>(null)
@@ -135,6 +139,8 @@ export function StructuredPromptModal({
           return
         }
         actions.setForm(parsed.patch)
+        // 导入替换了整份表单：套用标记随之失效，否则场景条会继续声称表单来自某套模板。
+        actions.setAppliedTemplate('')
         if (parsed.warnings.length > 0) {
           // 部分内容被忽略时要说出来，否则"导入成功但字段没变"会让人以为是坏掉了。
           console.warn('[structured-prompt] 导入时忽略了部分内容：', parsed.warnings)
@@ -195,6 +201,20 @@ export function StructuredPromptModal({
         </div>
 
         <div data-scroll="" style={modalBodyStyle}>
+          {applied === undefined ? null : (
+            // 场景条是**表单状态的陈述**（这份表单来自哪套模板），不是一次性提示：它会一直
+            // 显示到用户改套用别的模板、导入或清空。`data-applied-template` 是给渲染测试
+            // 用的锚点 —— 提示文案里的字样在预览区里也会出现，靠文本定位区分不开。
+            <p
+              // `note` 而不是 `status`：场景条是持久的状态陈述，不是需要播报的瞬时提示 ——
+              // 底部栏的 notice 已经占了 live region，同页再来一个只会变噪音。
+              role="note"
+              data-applied-template=""
+              style={{ margin: 0, fontSize: 12, color: COLORS.caption }}
+            >
+              {`已套用模板「${applied.label}」：${applied.whenToUse}。模板里的目标是形态化的，请把本次的具体任务写进「目标」。`}
+            </p>
+          )}
           {SECTIONS.map((section) => {
             const render = renderers[section.id]
             if (render === undefined) return null

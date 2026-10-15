@@ -10,7 +10,7 @@ import type { ChangeEvent, ReactNode, RefObject } from 'react'
 import type { PromptForm } from '../../shared/types.js'
 import type { FormActions } from './actions.js'
 import { SmallButton } from './base.js'
-import { TEMPLATES } from '../../shared/templates.js'
+import { TEMPLATES, findTemplate } from '../../shared/templates.js'
 import { COLORS, buttonStyle, modalFootStyle, primaryButtonStyle, rowStyle } from './styles.js'
 
 /** 底部操作栏的一次性提示。 */
@@ -55,18 +55,31 @@ export function ModalFooter({
     <div style={modalFootStyle}>
       <div style={{ ...rowStyle, flexWrap: 'wrap' }}>
         <select
-          style={{ ...buttonStyle, padding: '0 8px' }}
+          // `maxWidth` 是必要的：**选项文本本身**带了场景说明，不加约束时最长的选项会把这一
+          // 行撑开、把导入/导出/清空挤下去；收起时宽度受限，展开的列表里仍能看到完整文案。
+          // （下面的 `title` 不是展示路径 —— 浏览器不据此渲染 option 提示，它只是辅助技术的
+          // 兜底；场景的展示靠选项文本本身。）
+          style={{ ...buttonStyle, padding: '0 8px', maxWidth: 260 }}
           value=""
           title="用内置模板填充表单"
           aria-label="用内置模板填充表单"
           onChange={(event) => {
-            const picked = TEMPLATES.find(item => item.id === event.target.value)
+            // 解析走 `findTemplate`（与 host 侧、`Panel` 同一处），不在这里另查一次表 ——
+            // 否则"再加一层模板来源"时，用户唯一能选模板的入口不会跟着变。
+            const picked = findTemplate(event.target.value)
             event.target.value = ''
-            if (picked !== undefined) actions.setForm(picked.build() as Partial<PromptForm>)
+            if (picked === undefined) return
+            actions.setForm(picked.build() as Partial<PromptForm>)
+            // 套用标记只驱动界面上的场景条，不参与提示词构建（见 `StructuredState`）。
+            actions.setAppliedTemplate(picked.id)
           }}
         >
           <option value="">模板…</option>
-          {TEMPLATES.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}
+          {TEMPLATES.map(item => (
+            <option key={item.id} value={item.id} title={item.whenToUse}>
+              {`${item.label} · ${item.whenToUse}`}
+            </option>
+          ))}
         </select>
         <SmallButton title="从 JSON 导入表单（也接受无版本号的旧导出文件）" onClick={onImportClick}>导入</SmallButton>
         <input

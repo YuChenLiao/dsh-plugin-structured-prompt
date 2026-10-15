@@ -14,6 +14,7 @@ import { useEffect } from 'react'
 import type { ReactNode } from 'react'
 import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-store'
 import type { StructuredState } from '../../shared/types.js'
+import { findTemplate } from '../../shared/templates.js'
 import type { FormActions } from './actions.js'
 import { StructuredPromptModal } from './Modal.js'
 
@@ -40,6 +41,10 @@ export function StructuredInputPanel({
   const active = useStore(state => state.active)
   const form = useStore(state => state.form)
   const collapsed = useStore(state => state.collapsed)
+  const appliedTemplate = useStore(state => state.appliedTemplate)
+  // id → 模板的解析在这里，而不是在 `Modal` 内部：模板来源属于数据层，界面组件只收结果。
+  // 将来接入本机自定义模板时改这一处即可 —— `Modal` 的 props 与渲染都不用动。
+  const applied = findTemplate(appliedTemplate)
 
   // Esc 关闭弹窗；未打开时不挂监听。
   useEffect(() => {
@@ -59,6 +64,7 @@ export function StructuredInputPanel({
     <StructuredPromptModal
       form={form}
       collapsed={collapsed}
+      applied={applied}
       actions={actions}
       onClose={() => actions.close()}
       onSend={onSend}

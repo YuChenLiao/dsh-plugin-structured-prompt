@@ -29,6 +29,12 @@ const { StructuredInputTrigger } = await import(
 const { sectionStyle, modalBodyStyle } = await import(
   pathToFileURL(resolve(CLIENT, 'ui', 'styles.ts')).href
 )
+const { TEMPLATES } = await import(
+  pathToFileURL(resolve(CLIENT, '..', 'shared', 'templates.ts')).href
+)
+const { buildSystemPromptSections, renderPrompt } = await import(
+  pathToFileURL(resolve(CLIENT, '..', 'shared', 'prompt.ts')).href
+)
 
 let failed = 0
 const check = (label, ok, detail = '') => {
@@ -275,6 +281,107 @@ const notShadowedHtml = panel()
 check('说明为空时不提示格式类型失效',
   !notShadowedHtml.html.includes('格式类型已不生效'))
 instance.actions.setField('outputFormat', '')
+
+// ---- 7b) 模板：下拉带出场景，套用后给出场景条 ----
+//
+// 场景条只在「套用了某套模板」时出现，且必须说清模板给的是形态化目标 —— 模板使用率上来
+// 之后最容易出的问题就是只选模板、不复述具体任务，产物随之变泛。锚点用
+// `data-applied-template` 而不是文案：预览区会渲染提示词正文，靠文本定位会被同名字样
+// 代偿（文件头部记着这条教训）。
+// 7b 节的统一取用函数。两类断言都用它：
+//  - **该出现**的断言：失败时 detail 里带上渲染错误，不必靠猜；
+//  - **不该出现**的断言：先确认渲染成功 —— 否则 `!html.includes(...)` 会在渲染崩溃时假通过
+//    （`render()` 把抛错收成空 HTML）。本批踩到过：一次 props 改名的崩溃里，三条这样的断言
+//    全部显示 OK。
+/**
+ * 渲染面板并保证渲染成功。
+ * @returns 成功时的 HTML；渲染抛错时给出带标记的文本，使两类断言都变红。
+ */
+const okHtml = () => {
+  const out = panel()
+  return out.error === null ? out.html : `render-failed: ${String(out.error)}`
+}
+const renderFailed = html => html.startsWith('render-failed')
+
+instance.actions.setAppliedTemplate('')
+const optionsHtml = okHtml()
+check('下拉所在的面板能渲染（下面两条下拉断言的前提）',
+  !renderFailed(optionsHtml), optionsHtml.slice(0, 160))
+const missingScenes = TEMPLATES
+  .filter(item => !optionsHtml.includes(`${item.label} · ${item.whenToUse}`))
+  .map(item => item.id)
+check('下拉选项带出每套模板的一句话场景', missingScenes.length === 0, missingScenes.join(', '))
+// 选项文本变长后这条工具的宽度只能靠 `maxWidth` 兜住，否则最长的选项会把导入/导出/清空挤到
+// 下一行。正则锚定在 select 元素**内部**：别处出现同样的数值不该让这条通过。
+check('下拉有宽度约束（选项变长不会把底部按钮挤下去）',
+  /<select[^>]*style="[^"]*max-width:260px/.test(optionsHtml),
+  (/<select[^>]*>/.exec(optionsHtml) ?? [''])[0].slice(0, 160))
+
+instance.actions.setAppliedTemplate('code-review')
+const appliedHtml = okHtml()
+// 取场景条**元素内部**的文本：`whenToUse` 同时出现在下拉选项里，用整页 HTML 查会被下拉
+// 代偿 —— 定点突变时实测该断言在场景条完全消失后仍然通过。
+const appliedBanner = (/<p[^>]*data-applied-template[^>]*>([\s\S]*?)<\/p>/.exec(appliedHtml) ?? [])[1] ?? ''
+check('套用模板后渲染场景条', appliedBanner !== '', appliedBanner.slice(0, 160))
+const codeReview = TEMPLATES.find(item => item.id === 'code-review')
+// 形式断言而非硬编码字面量：拿模板自己的 label 与场景去比，换模板不必改断言，而"场景条
+// 写的是别的模板的场景"会红。
+check('场景条用的是该模板自己的 label 与场景',
+  codeReview !== undefined
+  && appliedBanner.includes(codeReview.label)
+  && appliedBanner.includes(codeReview.whenToUse),
+  appliedBanner.slice(0, 160))
+check('场景条提醒把具体任务写进「目标」（钉的是措辞，改文案需同步改断言）',
+  appliedBanner.includes('形态化') && appliedBanner.includes('具体任务'), appliedBanner)
+check('场景条只渲染一条',
+  (appliedHtml.match(/data-applied-template/g) ?? []).length === 1)
+
+// README 声称的两条边界要有断言守护 —— 只有文档、没有守护的承诺迟早会漂。
+instance.actions.close()
+instance.actions.open()
+const reopenedHtml = okHtml()
+check('关闭重开不清套用标记（同一会话内）',
+  !renderFailed(reopenedHtml) && reopenedHtml.includes('data-applied-template'),
+  reopenedHtml.slice(0, 120))
+instance.actions.setField('goal', '手改过的目标')
+const editedHtml = okHtml()
+check('手改字段不清套用标记',
+  !renderFailed(editedHtml) && editedHtml.includes('data-applied-template'),
+  editedHtml.slice(0, 120))
+
+instance.actions.setAppliedTemplate('')
+const blankHtml = okHtml()
+check('未套用模板时不渲染场景条',
+  !renderFailed(blankHtml) && !blankHtml.includes('data-applied-template'),
+  blankHtml.slice(0, 120))
+instance.actions.setAppliedTemplate('code-review-typo')
+const typoHtml = okHtml()
+check('解析不到的模板 id 不渲染场景条（界面不声称说不出来源的来源）',
+  !renderFailed(typoHtml) && !typoHtml.includes('data-applied-template'),
+  typoHtml.slice(0, 120))
+instance.actions.setAppliedTemplate('code-review')
+instance.actions.reset()
+const clearedPanel = panel()
+check('清空表单会一并清掉套用标记',
+  clearedPanel.error === null
+  && instance.getSnapshot().appliedTemplate === ''
+  && !clearedPanel.html.includes('data-applied-template'),
+  clearedPanel.error === null ? '' : String(clearedPanel.error))
+// 套用标记是**界面陈述**，不参与提示词构建：成稿只由 `form` 决定。这条边界的守护放在
+// 渲染套里 —— 两边共用 `shared/prompt.ts`，所以这里比对的正是发送/复制的那份文本。
+const promptOf = () => renderPrompt(buildSystemPromptSections(instance.getSnapshot().form))
+instance.actions.setField('role', '身份示例')
+instance.actions.setField('goal', '目标示例')
+const promptBefore = promptOf()
+instance.actions.setAppliedTemplate('code-review')
+const promptAfter = promptOf()
+check('套用标记不参与提示词构建（成稿逐字不变）', promptBefore === promptAfter,
+  promptBefore === promptAfter ? '' : `\n--- 套用前 ---\n${promptBefore}\n--- 套用后 ---\n${promptAfter}`)
+// 补回被 `reset()` 清掉的字段值：第 8 节的「预览区会渲染提示词正文」这一维需要页面上
+// 真的有正文（那条断言正是为了防"字段控件缺失被预览正文代偿"才这么写的）。
+const restoredHtml = okHtml()
+check('补回字段值后预览区重新出现正文',
+  restoredHtml.includes('# 身份') && restoredHtml.includes('身份示例'), restoredHtml.slice(0, 160))
 
 // 剪贴板降级：Node 里没有 navigator.clipboard，应走 execCommand 路径而不是抛错。
 const { copyText } = await import(pathToFileURL(resolve(CLIENT, 'ui', 'clipboard.ts')).href)

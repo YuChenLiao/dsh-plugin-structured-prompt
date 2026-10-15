@@ -62,3 +62,17 @@ export const TEMPLATES: readonly PromptTemplate[] = RAW.templates.map(entry => (
   whenToUse: entry.whenToUse,
   build: () => completeForm(toTemplateFields(entry.fields, entry.id)),
 }))
+
+/**
+ * 按 id 取模板。
+ *
+ * **唯一的 id 解析点**：模板下拉、套用后的场景条、host 侧的构建都从这里取。集中一处
+ * 是为了让"再加一层模板来源"（例如本机自定义模板）只需要改这个函数，而不是在每个调用
+ * 点各查一遍 `TEMPLATES`。
+ * @param id - 模板 id；空串按未指定处理。
+ * @returns 模板；未找到时为 `undefined`。
+ */
+export function findTemplate(id: string): PromptTemplate | undefined {
+  if (id === '') return undefined
+  return TEMPLATES.find(template => template.id === id)
+}

@@ -24,6 +24,7 @@ function emptyState(): StructuredState {
     active: false,
     form: createEmptyForm(),
     collapsed: ['rules', 'tools', 'output'],
+    appliedTemplate: '',
   }
 }
 
@@ -51,6 +52,8 @@ export interface StructuredActions {
   removeTool(draft: StructuredState, index: number): void
   /** 切换分组折叠状态。 */
   toggleSection(draft: StructuredState, id: string): void
+  /** 记录当前表单套用了哪套模板；空串表示不是模板套用状态（导入、手填都算）。 */
+  setAppliedTemplate(draft: StructuredState, id: string): void
   /** 清空表单，回到空白状态。 */
   reset(draft: StructuredState): void
 }
@@ -63,7 +66,8 @@ export type StructuredInputStore = StoreHandle<StructuredState, StructuredAction
  * @returns store 句柄，写集覆盖整表替换、字段写入、数组条目增删改序与分组折叠。
  */
 export function createStructuredInputStore(): StructuredInputStore {
-  return defineStore<StructuredState, StructuredActions>({    init: emptyState,
+  return defineStore<StructuredState, StructuredActions>({
+    init: emptyState,
     actions: {
       open: (draft) => { draft.active = true },
       close: (draft) => { draft.active = false },
@@ -73,7 +77,8 @@ export function createStructuredInputStore(): StructuredInputStore {
       setItem: (draft, key, index, value) => {
         if (index < 0 || index >= draft.form[key].length) return
         draft.form[key][index] = value
-      },      removeItem: (draft, key, index) => {
+      },
+      removeItem: (draft, key, index) => {
         if (index < 0 || index >= draft.form[key].length) return
         draft.form[key].splice(index, 1)
       },
@@ -100,7 +105,12 @@ export function createStructuredInputStore(): StructuredInputStore {
         if (at >= 0) draft.collapsed.splice(at, 1)
         else draft.collapsed.push(id)
       },
-      reset: (draft) => { draft.form = createEmptyForm() },
+      setAppliedTemplate: (draft, id) => { draft.appliedTemplate = id },
+      reset: (draft) => {
+        draft.form = createEmptyForm()
+        // 清空是「回到空白」：套用标记必须一起走，否则界面会继续声称表单来自某套模板。
+        draft.appliedTemplate = ''
+      },
     },
   })
 }

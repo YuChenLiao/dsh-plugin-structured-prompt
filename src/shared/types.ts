@@ -78,6 +78,14 @@ export interface StructuredState {
   form: PromptForm
   /** 已折叠的分组 id；基础信息永不出现于此。 */
   collapsed: string[]
+  /**
+   * 当前表单套用了哪套模板（模板 id）；空串表示不是模板套用状态。
+   *
+   * 它只驱动界面上的场景条，**不参与提示词构建**：表单字段本身才是产物来源，所以这里
+   * 记错也只会让提示条说错话，不会改变成稿。放在 store 而不是组件本地状态，是因为
+   * 渲染测试只能驱动 store，本地状态在 SSR 下不可观测（等于没有守护）。
+   */
+  appliedTemplate: string
 }
 
 /** 四个分组的元数据。 */

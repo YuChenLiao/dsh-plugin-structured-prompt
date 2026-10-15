@@ -9,7 +9,7 @@
 import { completeForm } from '../shared/forms.js'
 import { applyFormatChoice } from '../shared/format.js'
 import { buildSystemPrompt, validateForm } from '../shared/prompt.js'
-import { TEMPLATES } from '../shared/templates.js'
+import { findTemplate } from '../shared/templates.js'
 import type { OutputFormat, PromptForm, ToolPolicy } from '../shared/types.js'
 import { isProvidedList, prefer, splitCallableTools } from './args.js'
 import type { NarrowedArgs } from './args.js'
@@ -42,11 +42,9 @@ export function buildFromArgs(raw: NarrowedArgs): StructuredPromptValue {
     return Array.isArray(value) ? value : undefined
   }
 
-  // 模板作为默认值，调用参数逐字段覆盖它。
-  const templateId = asString('template')
-  const chosen = templateId === undefined
-    ? undefined
-    : TEMPLATES.find(template => template.id === templateId)
+  // 模板作为默认值，调用参数逐字段覆盖它。id → 模板的解析只有一处（`findTemplate`），
+  // 表单侧与 host 侧共用，避免两边各自查表后漂移。
+  const chosen = findTemplate(asString('template') ?? '')
   const base = chosen === undefined ? completeForm({}) : chosen.build()
 
   const rawTools = asArray('callable_tools')
