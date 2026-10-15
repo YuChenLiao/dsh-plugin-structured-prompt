@@ -2,7 +2,7 @@
 # dsh-plugin-structured-prompt —— DSH bundle patch
 # ============================================================================
 # 这是插件的"挂载声明"。DSH 启动时按 bundle 层栈叠加各插件 patch，
-# 本文件把结构化输入任务插件插入 profile 的配置树。
+# 本文件把两个组件各自插入 profile 的配置树（形态参考 dsh-ops 的组件做法）。
 #
 # 安装方式（从 GitHub）：
 #   dsh plugin --profile desktop add github:YuChenLiao/dsh-plugin-structured-prompt
@@ -11,11 +11,15 @@
 #   dsh plugin --profile desktop add link:<本目录绝对路径>
 #
 # 两种方式都会同时登记依赖、bundle 与 Loader 行；装完需要重启 DSH。
+#
+# 两个组件是**独立的装载行**：各自有自己的 config，因此可以单独 disable、单独配置。
+# `lib/index.js`（聚合入口）是把两个组件一次装完的写法，本文件不再使用它。
 # ============================================================================
 
 - insert:
+    # 结构化提示词：表单 + 模型可调用的工具（可选直投子代理）。
     - id: dsh-plugin-structured-prompt
-      name: dsh-plugin-structured-prompt
+      name: dsh-plugin-structured-prompt/structured
       # 可选配置：默认用哪个子代理 provider。不写＝内建默认（spawn，存在时）。
       # base bundle 同时注册 spawn 与 fork，装第三方 provider 的 profile 可用它改默认；
       # 调用参数 `delegate.provider` 仍然优先。
@@ -26,3 +30,12 @@
       # 删掉这段 `config` 即可恢复默认。
       # config:
       #   provider: spawn
+
+    # 提示词库：检索 prompts.chat 上的公开提示词（宿主代发，检索结果不进构建器）。
+    - id: dsh-plugin-structured-prompt-library
+      name: dsh-plugin-structured-prompt/library
+      # 可选配置：提示词库的基础地址，用于指向自托管实例（缺省 https://prompts.chat）。
+      # 形状不合法（不是绝对 URL、带凭据、带 query/fragment）会在装载期抛错。
+      # 想让这个组件不生效，给它加 `disabled: true` 即可（与结构化组件互不影响）。
+      # config:
+      #   libraryBaseUrl: https://prompts.chat

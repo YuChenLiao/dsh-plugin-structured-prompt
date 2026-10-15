@@ -1,13 +1,16 @@
 /**
  * 结构化输入任务插件的构建脚本。
  *
- * 两个产物：
- *  - `lib/index.js`   host 半边，ESM，供 DSH Loader 导入。
- *  - `lib/client.js`  浏览器半边，CJS 闭包工厂，产物格式必须与 DSH 的动态
- *                     client bundle 契约一致：
- *                     `window.__ModuleLoader__.load({ id, factory: (require) => {...} })`
- *                     共享模块（react、cordis 等）通过注入的 `require` 解析，
- *                     其余依赖内联。
+ * 产物（拆成组件后是四个）：
+ *  - `lib/index.js`       host 聚合入口（装配两个组件）。
+ *  - `lib/structured.js`  结构化提示词组件的 host 入口。
+ *  - `lib/library.js`     提示词库组件的 host 入口。
+ *  - `lib/client.js`      浏览器半边，CJS 闭包工厂，产物格式必须与 DSH 的动态 client bundle
+ *                        契约一致：`window.__ModuleLoader__.load({ id, factory })`；
+ *                        共享模块（react、cordis 等）通过注入的 require 解析，其余依赖内联。
+ *
+ * 三个 host 入口互不共享运行时（各自 import 自己的实现、各自内联），因此**每一个都必须零
+ * import** —— `link:` 安装下 ESM 会 realpath 到源码目录，那里没有 node_modules。
  *
  * 打包器复用 DSH 源码树 `D:\dsh\deepseek-harness` 中已安装的 tsdown，
  * 因此本插件自身不需要任何 devDependency 与网络安装。
@@ -38,6 +41,12 @@ const BASELINE_MODULES = [
   '@deepseek-ai/dsh-client-ui-dockkit',
 ]
 
+/** host 侧入口：源码路径 → 产物文件名。 */
+const HOST_ENTRIES = [
+  { source: 'src/index.ts', output: 'index.js', suffix: 'host' },
+  { source: 'src/components/structured/index.ts', output: 'structured.js', suffix: 'structured' },
+  { source: 'src/components/library/index.ts', output: 'library.js', suffix: 'library' },
+]
 
 /**
  * 载入 DSH 源码树里的 tsdown。
@@ -56,12 +65,16 @@ async function loadTsdown() {
   return mod.build
 }
 
-/** 构建 host 半边（TS，入口为 src/index.ts）。 */
-async function buildHost(build) {
+/**
+ * 构建一个 host 入口（ESM，零 import 由测试断言）。
+ * @param build - tsdown 的 build 函数。
+ * @param entry - 入口描述。
+ */
+async function buildHostEntry(build, entry) {
   await build({
-    name: `${PLUGIN_ID}/host`,
+    name: `${PLUGIN_ID}/${entry.suffix}`,
     cwd: PLUGIN_ROOT,
-    entry: [resolve(PLUGIN_ROOT, 'src', 'index.ts')],
+    entry: [resolve(PLUGIN_ROOT, entry.source)],
     outDir: resolve(PLUGIN_ROOT, 'lib'),
     format: ['esm'],
     platform: 'node',
@@ -69,8 +82,8 @@ async function buildHost(build) {
     dts: false,
     clean: false,
     sourcemap: false,
-    // 包的 exports 指向 lib/index.js，产物名必须与之一致。
-    outputOptions: { entryFileNames: 'index.js' },
+    // 包的 exports 指向这些文件名，产物名必须与之一致。
+    outputOptions: { entryFileNames: entry.output },
   })
 }
 
@@ -112,7 +125,8 @@ async function buildClient(build) {
 
 /** 源码入口存在性检查：防止构建静默产出空产物。 */
 function assertSources() {
-  for (const relative of ['src/index.ts', 'src/client/index.ts']) {
+  const required = [...HOST_ENTRIES.map(entry => entry.source), 'src/client/index.ts']
+  for (const relative of required) {
     const file = resolve(PLUGIN_ROOT, relative)
     if (!existsSync(file)) throw new Error(`构建入口缺失：${file}`)
   }
@@ -120,6 +134,8 @@ function assertSources() {
 
 assertSources()
 const build = await loadTsdown()
-await buildHost(build)
+for (const entry of HOST_ENTRIES) {
+  await buildHostEntry(build, entry)
+}
 await buildClient(build)
-console.log(`[${PLUGIN_ID}] 构建完成 → lib/index.js, lib/client.js`)
+console.log(`[${PLUGIN_ID}] 构建完成 → ${HOST_ENTRIES.map(entry => `lib/${entry.output}`).join(', ')}, lib/client.js`)

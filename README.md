@@ -105,8 +105,8 @@ host 半边注册一个工具 `build_structured_prompt`，让模型自己把模�
 
 - **`delegate` 走可选服务，不进 `inject`**。`ctx.get('subagents')` 缺失时，`delegate` 报错并指出"不带它调用即可拿到提示词" —— 把可选能力写成硬依赖，会让本插件在没装配子代理 provider 的组装里**整个不激活**。
 - **模板可以替模型带上身份与目标**：`role`/`goal` 通常必填，但只要传了 `template`，缺省或空白的那一项就由模板提供（构建时它们走「调用参数优先、未给用模板底座」）。这不是放松约束，而是让「只填任务特有的字段」真的能发生 —— 参数边界原来强制两者非空，模板永远补不进来，实测 10 次真实调用里有 2 次正是因为漏传 `role` 直接失败。放宽的只是「缺失/空白」，类型错误照旧必报；不带模板时缺 `role` 会报错，错误信息里指出可以用模板。
-- **provider 的默认值来自装载行的 `config`**，代码里不留可配置的假象：不写 `config` 时，只注册一个 provider 就用它，多个时用 `spawn`（存在时）、否则取第一个 —— DSH 的 base bundle 同时注册 `spawn` 与 `fork`，要求调用方显式指定等于让功能开箱不可用，而 `fork` 会继承父会话上下文、语义与「独立委托」相反。要用别的默认就在 `cordis.patch.yml` 的装载行写 `config: { provider: 'fork' }`；调用参数 `delegate.provider` 优先于它（空串与纯空白算「未给」，不会顶掉配置）。只有显式传了未注册的名字才报错并列出候选；一个都没有则明确拒绝。
-- **配置形状由导出的 `Config` 在装载期校验**：`config` 不是对象、含不支持的字段、或 `provider` 不是（写空的）字符串时，cordis 抛 `ValidationError` 并列出问题，`apply` 根本不会被调用 —— 静默忽略会让"profile 里写着 `fork`、实际用着 `spawn`"成为最难定位的那类失效。`Config` 是**手写**的 standard-schema 对象（不 import 校验库，见下节），判定与 `src/host/config.ts` 的 `narrowConfig` 同源。两点边界：`provider` 名**是否已注册**要到第一次 `delegate` 才校验（装载期还不知道子代理 provider 注册了什么）；`provider` 必须写在 `config:` 之下，写错层级会被 loader 原样保留、不报错。
+- **provider 的默认值来自装载行的 `config`**，代码里不留可配置的假象：不写 `config` 时，只注册一个 provider 就用它，多个时用 `spawn`（存在时）、否则取第一个 —— DSH 的 base bundle 同时注册 `spawn` 与 `fork`，要求调用方显式指定等于让功能开箱不可用，而 `fork` 会继承父会话上下文、语义与「独立委托」相反。要用别的默认就在 `cordis.patch.yml` 里**结构化组件那条装载行**写 `config: { provider: 'fork' }`；调用参数 `delegate.provider` 优先于它（空串与纯空白算「未给」，不会顶掉配置）。只有显式传了未注册的名字才报错并列出候选；一个都没有则明确拒绝。
+- **配置形状由导出的 `Config` 在装载期校验**：两个组件各有自己的 `Config`，聚合入口另有一个**只做分派层检查**的 `Config`（是不是对象、有没有不认识的字段），字段形状仍交给组件（结构化只认 `provider`、提示词库只认 `libraryBaseUrl`），把对方的字段写进某一条装载行会在装载期报"不支持的字段"。`config` 不是对象、含不支持的字段、或 `provider` 不是（写空的）字符串时，cordis 抛 `ValidationError` 并列出问题，`apply` 根本不会被调用 —— 静默忽略会让"profile 里写着 `fork`、实际用着 `spawn`"成为最难定位的那类失效。`Config` 是**手写**的 standard-schema 对象（不 import 校验库，见下节），判定与 `src/components/structured/host/config.ts` 的 `narrowConfig` 同源。两点边界：`provider` 名**是否已注册**要到第一次 `delegate` 才校验（装载期还不知道子代理 provider 注册了什么）；`provider` 必须写在 `config:` 之下，写错层级会被 loader 原样保留、不报错。
 - **前台 run 的收尾照官方实现**：结果与 `dispose()` 并行 settle，两者都失败时抛 `AggregateError`，避免清理失败掩盖真正的执行失败；非 `completed` 的终态一律算失败，但会带上诊断与部分输出。
 - **空串（含纯空白）、空数组、全空白条目都算「未给」**。用模板时传 `rules: []` 或 `rules: ['']` 的意图是"没额外要求"，而不是"删掉模板的规则"。
 - **`callable_tools` 收一个数组**，每项写成 `工具名` 或 `工具名：用途`，由工具拆成表单那两个按索引配对的数组。
@@ -133,9 +133,9 @@ host 半边注册一个工具 `build_structured_prompt`，让模型自己把模�
 `github:` 安装不会触发，因为包真实位于 profile 的 `node_modules` 下。
 
 所以 host 半边按 `ToolDefinition` 契约**手工构造**定义，**产物零 import**，与 client 半边
-「本地类型声明、不引入其包」的做法一致。代价是参数校验要自己写（`src/host/args.ts` 的
+「本地类型声明、不引入其包」的做法一致。代价是参数校验要自己写（`src/components/structured/host/args.ts` 的
 `narrowArgs`）：不合规时**报错**而不是静默丢弃，失败说明会回到模型手里。配置校验也由此
-自己承担（`src/host/config.ts`）：导出的 `Config` 是手写的 standard-schema 对象，判定逻辑
+自己承担（`src/components/structured/host/config.ts`）：导出的 `Config` 是手写的 standard-schema 对象，判定逻辑
 与 `narrowConfig` 同源，因此既能被 cordis 在装载期统一校验，又不引入任何运行时 import。
 
 `tests/verify-install.mjs` 断言 host 产物不含静态 `import`、动态 `import(` 与 `require(`，防止这个约束被无意打破。
@@ -157,7 +157,7 @@ host 半边注册一个工具 `build_structured_prompt`，让模型自己把模�
   免费、可自托管，还提供一套不需要 API key 的只读接口 —— 没有这些，这个入口无从谈起。
 - 界面上的来源标注跟着响应走（默认 `prompts.chat`，自托管时是你的实例域名），而**检索结果不经本插件
   的任何规范化处理**直接预览与发送：原文的著作权与许可仍归各自的贡献者。
-- 默认地址 `https://prompts.chat` 是第三方服务；要换成自托管实例，写装载行的
+- 默认地址 `https://prompts.chat` 是第三方服务；要换成自托管实例，写**提示词库组件那条装载行**的
   `config.libraryBaseUrl` 即可（见下文）。
 
 ## 安装
@@ -277,65 +277,83 @@ node --import file:///D:/dsh/deepseek-harness/node_modules/tsx/dist/loader.mjs `
 单文件不超过 **260 行**、客户端入口不超过 **140 行**（都由 `tests/verify-install.mjs` 断言），入口只做装配：
 
 ```text
-src/index.ts                   host 半边入口：注册模型可调用的工具 + 提示词库的代发路由
-src/host/
-  tool.ts                      工具定义（schema + 行为 + 卡片）
-  build.ts                     纯构建：已收窄的参数 → 表单 → 提示词
-  args.ts                      参数收窄 / 校验 / 默认值回退
-  parameters.ts                参数与输出 schema（标准 JSON Schema）
-  subagents.ts                 直投子代理：provider 选择 + 前台 run 的收尾
-  config.ts                    装载行配置的收窄与 Config schema（装载期校验）
-  library.ts                   提示词库的同源路由：路径 / 方法 / 失败归一，两条只读 GET
-  library-upstream.ts          上游请求与响应工具（fetch 可注入，便于离线断言）
-src/shared/                    两个半边共用的纯逻辑（无客户端/宿主依赖）
-  types.ts                     共享类型（表单、状态、分组元数据）
-  forms.ts                     空白表单、片段补全、导出/导入的版本化文档
-  prompt.ts                    提示词分段与组装（段落顺序是契约）
-  format.ts                    输出格式语义：骨架表、切换、遮蔽判定
-  tokens.ts                    token 粗略估算（预算提示用）
-  templates.ts                 模板库的加载、形状校验与 id 解析（复用导入校验那份 `FIELD_SHAPES`）
-  templates.json               模板数据：单一真源，表单下拉 / 工具枚举 / 黄金样本都取自它
-  library.ts                   提示词库的类型、常量与上游响应映射（与表单无耦合）
-src/client/
-  index.ts                     客户端入口：槽位注册 + 样式注入（无 UI 实现）
-  store.ts                     会话状态（defineStore 动作表）
-  send.ts                      把成稿发进会话（会话作用域的 conversation.send）
-  library.ts                   检索客户端（只认识同源路径，不认识上游地址）
-  plugin-context.ts            消费到的 Cordis 上下文形态（本地声明，不引入宿主包）
-  dsh-client-store.d.ts        DSH store 的本地类型声明（不引入其包）
+src/index.ts                          host 聚合入口：装配两个组件（单条装载行的写法）
+src/client/index.ts                   client 聚合入口：槽位注册 + 样式注入（无 UI 实现）
+src/components/                       两个组件各自成目录（形态参考 dsh-ops）
+  structured/                         结构化提示词：表单 + 模型可调用的工具
+    index.ts                          组件 host 入口：inject(['tools']) / Config / apply
+    client.ts                         组件 client 入口：两条槽位注册（入口 + 弹窗）
+    host/
+      tool.ts                         工具定义（schema + 行为 + 卡片）
+      build.ts                        纯构建：已收窄的参数 → 表单 → 提示词
+      args.ts                         参数收窄 / 校验 / 默认值回退
+      parameters.ts                   参数与输出 schema（标准 JSON Schema）
+      subagents.ts                    直投子代理：provider 选择 + 前台 run 的收尾
+      config.ts                       装载行配置（只认 provider）与 Config schema
+    shared/                           与 client 半边共用的纯逻辑
+      types.ts                        表单与组件状态类型
+      forms.ts                        空白表单、片段补全、导出/导入的版本化文档
+      prompt.ts                       提示词分段与组装（段落顺序是契约）
+      format.ts                       输出格式语义：骨架表、切换、遮蔽判定
+      tokens.ts                       token 粗略估算（预算提示用）
+      templates.ts                    模板库的加载、形状校验与 id 解析
+      templates.json                  模板数据：单一真源，表单下拉 / 工具枚举 / 黄金样本都取自它
+    client/
+      store.ts                        会话状态（defineStore 动作表）
+      actions.ts                      组件侧的动作类型（打断循环引用）
+      ui/
+        config.ts                     分组与逐条字段的元数据
+        CollapsibleSection.tsx        可折叠分组容器
+        ListEditor.tsx                逐条增删改序
+        ToolPairEditor.tsx            工具名 ↔ 用途配对编辑
+        Preview.tsx                   提示词预览
+        ModalFooter.tsx               底部操作栏
+        Modal.tsx                     弹窗三段结构
+        Panel.tsx                     conversation.input.dock 占用者（表单弹窗）
+        Trigger.tsx                   conversation.input.left 占用者（入口按钮）
+        sections/                     四个分组各自的字段
+          BasicSection.tsx  RulesSection.tsx  ToolsSection.tsx  OutputSection.tsx
+  library/                            提示词库：检索 prompts.chat，宿主代发
+    index.ts                          组件 host 入口：无硬依赖 / Config / apply
+    client.ts                         组件 client 入口：两条槽位注册
+    host/
+      library.ts                      同源路由：路径 / 方法 / 失败归一，两条只读 GET
+      library-upstream.ts             上游请求与响应工具（fetch 可注入，便于离线断言）
+      config.ts                       装载行配置（只认 libraryBaseUrl）与 Config schema
+    shared/
+      library.ts                      类型、常量与上游响应映射（与表单无耦合）
+    client/
+      store.ts                        检索弹窗自己的会话状态
+      actions.ts                      组件侧的动作类型
+      library.ts                      检索客户端（只认识同源路径，不认识上游地址）
+      ui/
+        LibraryModal.tsx              弹窗（外壳 / 原文预览 / 请求副作用）
+        LibraryList.tsx               列表视图（搜索行 + 状态行 + 结果列表）
+        Panel.tsx                     conversation.input.dock 占用者（检索弹窗）
+        Trigger.tsx                   conversation.input.left 占用者（入口按钮）
+src/shared/                           两个组件共用的部分
+  slots.ts                            槽位注册描述（两个组件的注册清单共用它）
+  send.ts                             把内容发进会话（会话作用域的 conversation.send）
+  plugin-context.ts                   消费到的 Cordis 上下文形态（本地声明，不引入宿主包）
+  dsh-client-store.d.ts               DSH store 的本地类型声明（不引入其包）
   ui/
-    theme.ts                   颜色 token 与文本域尺寸
-    styles.ts                  样式对象 + 三条布局不变量 + PANEL_CSS
-    config.ts                  分组与逐条字段的元数据
-    actions.ts                 组件侧的动作类型（打断循环引用）
-    clipboard.ts               剪贴板写入（含 execCommand 降级）
-    base.tsx                   TextArea / TextInput / Field / SmallButton / ChipGroup
-    ListEditor.tsx             逐条增删改序
-    ToolPairEditor.tsx         工具名 ↔ 用途配对编辑
-    CollapsibleSection.tsx     可折叠分组容器
-    Preview.tsx                提示词预览
-    ModalFooter.tsx            底部操作栏
-    Modal.tsx                  弹窗三段结构
-    LibraryModal.tsx           提示词库弹窗（外壳 / 原文预览 / 请求副作用）
-    LibraryList.tsx            提示词库的列表视图（搜索行 + 状态行 + 结果列表）
-    Panel.tsx                  conversation.input.dock 占用者（按开关渲染两个弹窗）
-    Trigger.tsx                input.left 占用者（表单与提示词库两个入口按钮）
-    sections/                  四个分组各自的字段
-      BasicSection.tsx  RulesSection.tsx  ToolsSection.tsx  OutputSection.tsx
+    theme.ts                          颜色 token 与文本域尺寸
+    styles.ts                         样式对象 + 三条布局不变量 + PANEL_CSS
+    base.tsx                          TextArea / TextInput / Field / SmallButton / ChipGroup
+    clipboard.ts                      剪贴板写入（含 execCommand 降级）
 tools/
-  lib/build.mjs                构建脚本（tsdown，两个半边）
-  lib/loader-hook.mjs          测试用重定向（react / react-dom / 依赖桩）+ .js→.ts 映射
-  lib/store-stub.mjs           defineStore 的离线实现
-  setup-dev-links.mjs          开发态依赖链接（.dev-deps/）
-  run-tests.mjs                八套验证的统一入口
-tests/                         test-prompt / test-golden / test-document / test-tool
-                               / test-registration / test-render / verify-install
-  golden/                      提示词格式的契约样本（cases.mjs + 每个用例的 .txt）
-docs/changes/                  每个批次的归档：行为变更、契约影响、以及「评估后决定不做」的方案
+  lib/build.mjs                       构建脚本（tsdown，三个 host 入口 + 一个 client 产物）
+  lib/loader-hook.mjs                 测试用重定向（react / react-dom / 依赖桩）+ .js→.ts 映射
+  lib/store-stub.mjs                  defineStore 的离线实现
+  setup-dev-links.mjs                 开发态依赖链接（.dev-deps/）
+  run-tests.mjs                       八套验证的统一入口
+tests/                                 test-prompt / test-golden / test-document / test-tool
+                                       / test-registration / test-render / verify-install
+  golden/                             提示词格式的契约样本（cases.mjs + 每个用例的 .txt）
+docs/changes/                         每个批次的归档：行为变更、契约影响、以及「评估后决定不做」的方案
 ```
 
-`src/shared/` 是**两个半边的交汇点**：客户端表单与模型工具都调用同一份 `buildSystemPrompt`，
-所以两种入口产出的提示词必然一致（`tests/test-tool.mjs` 会逐字比对）。
+`src/shared/` 是**两个组件共用的那部分**（槽位注册描述、发送链路、上下文类型、UI 基元）：结构化组件与提示词库组件各自完整，谁也不 import 谁 —— 检索到的是别人的成品文本，不进构建器，这一点在目录上就是可见的。而每个组件内部的 `shared/` 是**该组件两个半边的交汇点**：客户端表单与模型工具都调用同一份 `buildSystemPrompt`，所以两种入口产出的提示词必然一致（`tests/test-tool.mjs` 会逐字比对）。
 
 `tests/test-document.mjs` 守两类文档契约：导出/导入的 JSON 文档，以及本 README 里能机器
 核对的硬事实（表项数量、行数上限、分组与模板数量、槽位键与架构表、工具返回形状、工具名、
@@ -350,7 +368,7 @@ README，那套会先红。
 ctx.slots.register({ name, id, order, store }, Component)   // 组件里才有 props.useStore / props.actions
 ```
 
-漏声明 `store` → 组件拿到 `undefined` → 渲染时抛错 → 条目被隔离失效（表现就是"按钮不见了"，且槽位检查里该条目 `active: false`）。这条契约渲染测试抓不到（渲染测试直接给组件喂 `useStore`），因此单独由 `tests/test-registration.mjs` 在注册层断言：**每个注册都必须声明 `store`，且两者共用同一个句柄**。
+漏声明 `store` → 组件拿到 `undefined` → 渲染时抛错 → 条目被隔离失效（表现就是"按钮不见了"，且槽位检查里该条目 `active: false`）。这条契约渲染测试抓不到（渲染测试直接给组件喂 `useStore`），因此单独由 `tests/test-registration.mjs` 在注册层断言：**四条注册都声明了 `store`；同一组件的两条共用同一个句柄；两个组件用的必须是不同句柄**（前两条保证入口能驱动自己的弹窗，第三条保证两个组件的状态不耦合——那正是这次拆分的理由）。
 
 ### 产物契约
 
@@ -361,32 +379,45 @@ window.__ModuleLoader__.load({ id: 'dsh-plugin-structured-prompt', factory: requ
 ```
 
 - `react` 与 `@deepseek-ai/dsh-client-store` 走注入的 `require`（模块表提供），其余依赖内联；
-- `lib/index.js` 是 host 半边：`apply` 收窄装载行配置、注册模型可调用的工具 `build_structured_prompt`（`inject: ['tools']`）与提示词库的两条同源路由，不读取任何会话数据；产物**零 import**（见「为什么工具定义是手写的」）—— 检索路由用的是全局 `fetch` 与 `Response`，这条新增的网络能力因此没有破坏自包含约束。
-- **提示词库的路由走可选服务**：`ctx.get('connection')`，**不写进 `inject`**。理由与 `delegate` 走 `ctx.get('subagents')` 相同 —— 没有 web 载体的组装里，本插件仍要能提供"构建提示词"的能力；把可选能力写成硬依赖会让整个插件在那些组装里不激活。没有 `connection`（或没有 `effect` 面，无法保证释放）时只跳过路由注册，工具照常可用。
+- host 侧有**三个**产物：`lib/index.js`（聚合入口）、`lib/structured.js`、`lib/library.js`（两个组件入口）。三者各自内联自己的实现，因此**每一个都必须零 import**（见「为什么工具定义是手写的」）—— `tests/verify-install.mjs` 逐个断言，只查一个会把另一个漏掉。`lib/structured.js` 只注册模型可调用的工具 `build_structured_prompt`（`inject: ['tools']`）；`lib/library.js` 只注册提示词库的两条路由（`inject: []`），用的是全局 `fetch` 与 `Response`，这条网络能力因此没有破坏自包含约束 —— 路由**不在** `lib/structured.js` 里，两个组件的产物边界由 `tests/verify-install.mjs` 与工具套逐个核对。
+- **提示词库的路由走可选服务**：`ctx.get('connection')`，**不写进 `inject`**（`lib/library.js` 的 `inject` 是空数组）。理由与 `delegate` 走 `ctx.get('subagents')` 相同 —— 没有 web 载体的组装里，本插件仍要能提供"构建提示词"的能力；把可选能力写成硬依赖会让整个组件在那些组装里不激活。没有 `connection`（或没有 `effect` 面，无法保证释放）时只跳过路由注册，其余能力不变。
 
 ## 架构
 
-两个槽位注册，**都声明同一个 `store` 句柄**：
+本插件由**两个组件**组成，各自带 host 与 client 半边：
+
+| 组件 | host 半边 | client 半边 | 装载行（`cordis.patch.yml`） | config |
+| --- | --- | --- | --- | --- |
+| 结构化提示词 | 工具 `build_structured_prompt`（`inject: ['tools']`） | 表单入口 + 表单弹窗 | `dsh-plugin-structured-prompt/structured` | `provider` |
+| 提示词库 | 两条同源只读路由（`inject: []`） | 库入口 + 检索弹窗 | `dsh-plugin-structured-prompt/library` | `libraryBaseUrl` |
+
+组件形态参考 dsh-ops：一个包、**多条装载行**，每条有自己的 id、`config` 与 `disabled`，所以两个组件能单独开关、单独配置。`lib/index.js`（聚合入口）把两者一次装完，供"只写一条装载行"的组装使用。
+
+槽位注册因此是**四条**：
 
 | 槽位 | 组件 | 职责 |
 | --- | --- | --- |
-| `conversation.input.left`（list） | `ui/Trigger.tsx` | 输入框底部工具栏里的两个入口按钮（结构化输入任务 / 提示词库） |
-| `conversation.input.dock`（list） | `ui/Panel.tsx` | 打开哪个就渲染哪个弹窗（表单 / 提示词库，两者互斥），都不开时不占空间 |
+| `conversation.input.left`（list） | `structured/client/ui/Trigger.tsx` | 工具栏里的「结构化输入任务」按钮 |
+| `conversation.input.dock`（list） | `structured/client/ui/Panel.tsx` | 表单弹窗（未打开时不占空间） |
+| `conversation.input.left`（list） | `library/client/ui/Trigger.tsx` | 工具栏里的「提示词库」按钮 |
+| `conversation.input.dock`（list） | `library/client/ui/Panel.tsx` | 检索弹窗（未打开时不占空间） |
 
-两处 `store` 座位不可省略（见上文[槽位注册契约](#槽位注册契约注册测试守住的那条线)），否则组件拿不到 `useStore` 会直接崩溃失效。声明后渲染器按「handle × sessionId」共享同一实例，所以入口的 `open()` / `openLibrary()` 会直接驱动弹窗组件重渲染——不需要任何跨注册的状态同步。两个开关在 store 里**互斥**：打开一个会关掉另一个。
+四条注册都不可省略 `store` 座位（见上文[槽位注册契约](#槽位注册契约注册测试守住的那条线)），否则组件拿不到 `useStore` 会直接崩溃失效。声明后渲染器按「handle × sessionId」共享同一实例，所以入口的 `open()` 会直接驱动自己的弹窗重渲染——不需要任何跨注册的状态同步，也**不需要两个组件之间同步**：它们互不干涉（拆分前它们挤在同一个条目里、共用一个状态树，两个开关还得互斥）。
 
-模块划分见上文[代码结构](#代码结构)；数据流是单向的：
+模块划分见上文[代码结构](#代码结构)；数据流是单向的，两个组件各一条：
 
 ```text
-store.ts (状态) ──► ui/Panel.tsx ──► ui/Modal.tsx ──► ui/sections/* ──► ui/base.tsx
-                        │      │           │
-                        │      │           └──► ui/ModalFooter.tsx（模板 / 导入导出 / 复制发送）
-                        │      └──► ui/LibraryModal.tsx ──► client/library.ts ──►（同源路由 → 宿主代发）
-                        └──► ui/Trigger.tsx（同一 store 的另一处只读/写）
-format.ts (纯函数) ◄── PromptForm ── ui/OutputSection.tsx（选格式时填骨架）
+structured/client/store.ts ──► ui/Panel.tsx ──► ui/Modal.tsx ──► ui/sections/* ──► shared/ui/base.tsx
+                                 │      │           │
+                                 │      │           └──► ui/ModalFooter.tsx（模板 / 导入导出 / 复制发送）
+                                 │      └──► ui/Trigger.tsx（同一 store 的另一处读写）
+                                 └──► format.ts（纯函数）◄── PromptForm ── ui/sections/OutputSection.tsx
+
+library/client/store.ts ──► ui/Panel.tsx ──► ui/LibraryModal.tsx ──► client/library.ts
+                              └──► ui/Trigger.tsx                        └──►（同源路由 → 宿主代发）
 ```
 
-提示词库那条支线**不在构建器上**：`shared/library.ts` 与表单类型没有耦合，检索到的原文既不进 `PromptForm`、也不经 `buildSystemPrompt`，因此黄金样本（25 条）与本批改动无关 —— 这正是"检索结果不走规范检测"在代码结构上的落点。
+提示词库那条支线**不在构建器上**：`library/shared/library.ts` 与表单类型没有耦合，检索到的原文既不进 `PromptForm`、也不经 `buildSystemPrompt`，因此黄金样本（25 条）与它无关 —— 这正是"检索结果不走规范检测"在代码结构上的落点。
 
 ### 为什么不用另外两个候选挂载点
 

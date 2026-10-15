@@ -69,32 +69,77 @@ if (existsSync(manifestPath)) {
 const patchFile = resolve(PLUGIN_ROOT, 'cordis.patch.yml')
 check('插件自带 bundle patch 文件', existsSync(patchFile))
 if (existsSync(patchFile)) {
-  check('patch 声明了本插件的装载行',
-    readFileSync(patchFile, 'utf8').includes(`id: ${PLUGIN_ID}`))
+  const patchText = readFileSync(patchFile, 'utf8')
+  // 组件拆分后是**两条**装载行，各自指向一个组件入口；只断言包名的旧写法会漏掉新的一条。
+  check('patch 声明了两个组件的装载行',
+    patchText.includes(`name: ${PLUGIN_ID}/structured`)
+    && patchText.includes(`name: ${PLUGIN_ID}/library`),
+    patchText.split('\n').filter(line => line.includes('name:')).map(line => line.trim()).join(' | '))
 }
 const ownManifest = JSON.parse(readFileSync(resolve(PLUGIN_ROOT, 'package.json'), 'utf8'))
 check('清单的 dsh.bundle.patch 指向该文件', ownManifest.dsh?.bundle?.patch === './cordis.patch.yml',
   String(ownManifest.dsh?.bundle?.patch))
 
-// 4) host 半边可被导入且导出 apply
-const hostEntry = resolve(PLUGIN_ROOT, 'lib', 'index.js')
-check('host 产物存在', existsSync(hostEntry), hostEntry)
-if (existsSync(hostEntry)) {
+// 3b) 装载行 → exports → 产物名 三方一致。
+//
+// 只查 patch 的文本包含是不够的：`exports` 被删掉、或指向另一个组件的产物时，装载行会指向不存在
+// 的入口（或装到错的组件），而本机八套测试**全绿** —— 这种组合只有真的启动 DSH 才暴露。
+const componentExports = ownManifest.exports ?? {}
+for (const component of ['structured', 'library']) {
+  const target = componentExports[`./${component}`]?.default ?? ''
+  check(`exports 提供组件入口 ./${component} → lib/${component}.js`,
+    target === `./lib/${component}.js`, String(target) || '(缺失)')
+}
+for (const file of ['index.js', 'structured.js', 'library.js']) {
+  check(`exports 指向的产物真实存在（lib/${file}）`,
+    existsSync(resolve(PLUGIN_ROOT, 'lib', file)))
+}
+check('装载行的 name 都落在 exports 的组件入口上', (() => {
+  if (!existsSync(patchFile)) return false
+  const names = [...readFileSync(patchFile, 'utf8').matchAll(/^\s*name:\s*(\S+)\s*$/gm)]
+    .map(match => match[1])
+  // 恰好两条，且每条都是 `<包名>/<组件>`，那个组件在 exports 里有对应的产物路径。
+  return names.length === 2 && names.every((name) => {
+    const prefix = `${PLUGIN_ID}/`
+    if (!name.startsWith(prefix)) return false
+    const component = name.slice(prefix.length)
+    return componentExports[`./${component}`]?.default === `./lib/${component}.js`
+  })
+})(), (() => {
+  const names = existsSync(patchFile)
+    ? [...readFileSync(patchFile, 'utf8').matchAll(/^\s*name:\s*(\S+)\s*$/gm)].map(match => match[1])
+    : []
+  return `patch=${names.join(', ') || '(无)'} exports=${Object.keys(componentExports).join(', ')}`
+})())
+
+// 4) host 产物：三个入口都可导入、都导出 apply，且都自包含
+//
+// 组件拆分后 host 侧有三个产物：聚合入口 + 两个组件入口。三者各自内联自己的实现，所以
+// "零 import" 这条约束必须逐个断言 —— 只查一个会把另一个漏掉。
+const HOST_ENTRIES = [
+  { file: 'index.js', label: '聚合入口' },
+  { file: 'structured.js', label: '结构化组件' },
+  { file: 'library.js', label: '提示词库组件' },
+]
+for (const entry of HOST_ENTRIES) {
+  const hostEntry = resolve(PLUGIN_ROOT, 'lib', entry.file)
+  check(`host 产物存在（${entry.label}）`, existsSync(hostEntry), hostEntry)
+  if (!existsSync(hostEntry)) continue
   try {
     const mod = await import(pathToFileURL(hostEntry).href)
-    check('host 半边导出 apply()', typeof mod.apply === 'function')
-    check('host 半边导出 inject', Array.isArray(mod.inject))
+    check(`host 产物导出 apply（${entry.label}）`, typeof mod.apply === 'function')
+    check(`host 产物导出 inject（${entry.label}）`, Array.isArray(mod.inject))
     // 自包含约束（见 README「为什么工具定义是手写的」）：import 任何宿主包都会让
     // link: 安装下的插件停在未激活状态 —— 模块加载失败，而且不报错。
     const hostText = readFileSync(hostEntry, 'utf8')
     // 动态 `import()` 不会在链接期失败（那时它还没执行），但同样会在执行到它时解析
     // 宿主包 —— 失败时机更晚、更难定位，因此一并挡住，而不是只挡行首的静态 import。
-    check('host 产物自包含（无 import / require）',
+    check(`host 产物自包含（${entry.label}，无 import / require）`,
       !/^\s*import[\s{'"]/m.test(hostText)
       && !/\bimport\s*\(/.test(hostText)
       && !/\brequire\s*\(/.test(hostText))
   } catch (error) {
-    check('host 半边可导入', false, String(error))
+    check(`host 产物可导入（${entry.label}）`, false, String(error))
   }
 }
 
@@ -152,13 +197,38 @@ const sourcesUnder = (prefixes) => sources.filter((file) => {
   return prefixes.some(prefix => relative.startsWith(prefix))
 })
 const newestOf = (files) => Math.max(...files.map(file => statSync(file).mtimeMs))
-const hostEntryFile = resolve(PLUGIN_ROOT, 'lib', 'index.js')
-const hostNewest = newestOf(sourcesUnder(['src/host/', 'src/shared/', 'src/index.ts']))
-const clientNewest = newestOf(sourcesUnder(['src/client/', 'src/shared/']))
-check('lib/index.js 不早于它对应的源码（已重新构建）',
-  existsSync(hostEntryFile) && statSync(hostEntryFile).mtimeMs >= hostNewest - MTIME_TOLERANCE_MS,
-  `bundle=${existsSync(hostEntryFile) ? new Date(statSync(hostEntryFile).mtimeMs).toISOString() : '缺失'}`
-  + ` newestSrc=${new Date(hostNewest).toISOString()}（容差 ${MTIME_TOLERANCE_MS}ms）`)
+// 按半边划分源码集合：组件拆分后 host 与 client 不再各是一个目录，所以用显式的前缀清单，
+// 而不是"某个目录 vs 某个目录"。
+const HOST_SOURCES = [
+  'src/index.ts',
+  'src/shared/',
+  'src/components/structured/index.ts',
+  'src/components/structured/host/',
+  'src/components/structured/shared/',
+  'src/components/library/index.ts',
+  'src/components/library/host/',
+  'src/components/library/shared/',
+]
+const CLIENT_SOURCES = [
+  'src/client/',
+  'src/shared/',
+  'src/components/structured/client.ts',
+  'src/components/structured/client/',
+  'src/components/structured/shared/',
+  'src/components/library/client.ts',
+  'src/components/library/client/',
+  'src/components/library/shared/',
+]
+const hostNewest = newestOf(sourcesUnder(HOST_SOURCES))
+const clientNewest = newestOf(sourcesUnder(CLIENT_SOURCES))
+for (const entry of HOST_ENTRIES) {
+  const file = resolve(PLUGIN_ROOT, 'lib', entry.file)
+  const built = existsSync(file) ? statSync(file).mtimeMs : 0
+  check(`lib/${entry.file} 不早于它对应的源码（已重新构建，${entry.label}）`,
+    built >= hostNewest - MTIME_TOLERANCE_MS,
+    `bundle=${built === 0 ? '缺失' : new Date(built).toISOString()}`
+    + ` newestSrc=${new Date(hostNewest).toISOString()}（容差 ${MTIME_TOLERANCE_MS}ms）`)
+}
 const clientBundleTime = existsSync(clientEntry) ? statSync(clientEntry).mtimeMs : 0
 check('lib/client.js 不早于它对应的源码（已重新构建）',
   clientBundleTime >= clientNewest - MTIME_TOLERANCE_MS,

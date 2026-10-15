@@ -15,19 +15,19 @@ import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const SRC = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'src')
-const toolModule = await import(pathToFileURL(resolve(SRC, 'host', 'tool.ts')).href)
-const prompt = await import(pathToFileURL(resolve(SRC, 'shared', 'prompt.ts')).href)
+const toolModule = await import(pathToFileURL(resolve(SRC, 'components', 'structured', 'host', 'tool.ts')).href)
+const prompt = await import(pathToFileURL(resolve(SRC, 'components', 'structured', 'shared', 'prompt.ts')).href)
 const { completeForm, createEmptyForm } = await import(
-  pathToFileURL(resolve(SRC, 'shared', 'forms.ts')).href
+  pathToFileURL(resolve(SRC, 'components', 'structured', 'shared', 'forms.ts')).href
 )
-const { TEMPLATES } = await import(pathToFileURL(resolve(SRC, 'shared', 'templates.ts')).href)
+const { TEMPLATES } = await import(pathToFileURL(resolve(SRC, 'components', 'structured', 'shared', 'templates.ts')).href)
 const { resolveProviderName, runForeground } = await import(
-  pathToFileURL(resolve(SRC, 'host', 'subagents.ts')).href
+  pathToFileURL(resolve(SRC, 'components', 'structured', 'host', 'subagents.ts')).href
 )
 // 参数边界与纯构建：多处断言直接调用它们，所以在文件顶部 import。
-const argsModule = await import(pathToFileURL(resolve(SRC, 'host', 'args.ts')).href)
+const argsModule = await import(pathToFileURL(resolve(SRC, 'components', 'structured', 'host', 'args.ts')).href)
 const { buildFromArgs, resolveCallableTools } = await import(
-  pathToFileURL(resolve(SRC, 'host', 'build.ts')).href
+  pathToFileURL(resolve(SRC, 'components', 'structured', 'host', 'build.ts')).href
 )
 
 /** 一个立即 settle 的假子代理运行。 */
@@ -667,7 +667,7 @@ check('工具层把 exec.signal 交给子代理运行',
 // 部署级选择（用哪个子代理 provider）来自 `cordis.patch.yml` 的 `config`，而不是代码里的
 // 常量。校验交给导出的 `Config`（手写的 standard-schema 对象）：形状不对时 cordis 在装载期
 // 抛错、`apply` 不会被调用 —— 否则"profile 里写着 fork、实际用 spawn"这种失效没人会发现。
-const { Config, narrowConfig } = await import(pathToFileURL(resolve(SRC, 'host', 'config.ts')).href)
+const { Config, narrowConfig } = await import(pathToFileURL(resolve(SRC, 'components', 'structured', 'host', 'config.ts')).href)
 const { validate } = Config['~standard']
 
 // 导出的 `Config` 是 cordis 校验装载行配置的入口（只读 `['~standard'].validate`）：手写而
@@ -848,7 +848,7 @@ check('tool_policy 空串被当作未给',
 // 同一组状态经 host 与经客户端路径必须产出逐字相同。
 check('host 侧不再有独立的格式骨架实现', argsModule.resolveOutputSpec === undefined)
 
-const { applyFormatChoice } = await import(pathToFileURL(resolve(SRC, 'shared', 'format.ts')).href)
+const { applyFormatChoice } = await import(pathToFileURL(resolve(SRC, 'components', 'structured', 'shared', 'format.ts')).href)
 const reportTemplate = TEMPLATES.find(item => item.id === 'report')
 const hostVsClient = (() => {
   const fromHost = buildFromArgs(argsModule.narrowArgs({
@@ -897,8 +897,12 @@ check('返回取消注册函数', typeof disposer === 'function')
 // 浏览器直连会被拒），所以断言分三层：纯映射与参数夹取、路由 handler 的上游 URL 与失败归一、
 // 以及注册面（有 `connection` 才注册、没有就跳过 —— 与 `delegate` 走 `ctx.get` 是同一条规则）。
 
-const libraryModule = await import(pathToFileURL(resolve(SRC, 'host', 'library.ts')).href)
-const lib = await import(pathToFileURL(resolve(SRC, 'shared', 'library.ts')).href)
+const libraryModule = await import(pathToFileURL(resolve(SRC, 'components', 'library', 'host', 'library.ts')).href)
+const lib = await import(pathToFileURL(resolve(SRC, 'components', 'library', 'shared', 'library.ts')).href)
+// 库组件的 Config 与结构化组件的是**两份**（拆分后各管各的字段），断言要分开取。
+const libraryConfig = await import(pathToFileURL(resolve(SRC, 'components', 'library', 'host', 'config.ts')).href)
+const libraryValidate = libraryConfig.Config['~standard'].validate
+const libraryNarrow = libraryConfig.narrowConfig
 
 check('条数被夹进上游可接受的范围',
   lib.clampLimit(undefined) === lib.LIBRARY_DEFAULT_LIMIT
@@ -1181,14 +1185,14 @@ check('检索端点的 404 不冒充"记录不存在"',
   `${search404.status} ${search404Body}`)
 
 check('Config 拒绝会被改写 origin 的地址与带 query/hash 的写法', (() => {
-  const credentials = validate({ libraryBaseUrl: 'https://host@evil.example' })
-  const withQuery = validate({ libraryBaseUrl: 'https://host/sub?x=1' })
-  const withHash = validate({ libraryBaseUrl: 'https://host/sub#frag' })
+  const credentials = libraryValidate({ libraryBaseUrl: 'https://host@evil.example' })
+  const withQuery = libraryValidate({ libraryBaseUrl: 'https://host/sub?x=1' })
+  const withHash = libraryValidate({ libraryBaseUrl: 'https://host/sub#frag' })
   return 'issues' in credentials && 'issues' in withQuery && 'issues' in withHash
 })())
 
 // 两侧各写一份路径字面量，靠这条交叉断言防止"改一边忘另一边"。
-const clientLibrary = await import(pathToFileURL(resolve(SRC, 'client', 'library.ts')).href)
+const clientLibrary = await import(pathToFileURL(resolve(SRC, 'components', 'library', 'client', 'library.ts')).href)
 check('客户端与宿主的路由路径常量一致',
   clientLibrary.LIBRARY_SEARCH_PATH === libraryModule.LIBRARY_ROUTE_PATH
   && clientLibrary.LIBRARY_ITEM_PATH === libraryModule.LIBRARY_ITEM_ROUTE_PATH,
@@ -1263,18 +1267,18 @@ check('响应 → store 的 patch 不丢字段（含 source）',
   && patched.items.length === 1, JSON.stringify(patched))
 
 check('Config 校验 libraryBaseUrl 的形状', (() => {
-  const notString = validate({ libraryBaseUrl: 42 })
-  const noHost = validate({ libraryBaseUrl: 'https://' })
-  const wrongScheme = validate({ libraryBaseUrl: 'ftp://x.example' })
+  const notString = libraryValidate({ libraryBaseUrl: 42 })
+  const noHost = libraryValidate({ libraryBaseUrl: 'https://' })
+  const wrongScheme = libraryValidate({ libraryBaseUrl: 'ftp://x.example' })
   return 'issues' in notString && notString.issues[0].message.includes('libraryBaseUrl')
     && 'issues' in noHost && 'issues' in wrongScheme
 })())
 
 check('Config 收窄 libraryBaseUrl：去空白去尾斜杠，空串算没配', (() => {
-  const ok = validate({ libraryBaseUrl: '  https://self.example/  ' })
+  const ok = libraryValidate({ libraryBaseUrl: '  https://self.example/  ' })
   return !('issues' in ok) && ok.value.libraryBaseUrl === 'https://self.example'
-    && Object.keys(narrowConfig({ libraryBaseUrl: '   ' })).length === 0
-})(), JSON.stringify(validate({ libraryBaseUrl: '  https://self.example/  ' })))
+    && Object.keys(libraryNarrow({ libraryBaseUrl: '   ' })).length === 0
+})(), JSON.stringify(libraryValidate({ libraryBaseUrl: '  https://self.example/  ' })))
 
 // 注册面：**必须走 `ctx.inject`** —— 加载器的 entry 是并行创建的，在 apply 期读一次
 // `ctx.get('connection')` 很可能读到"还没就绪"，然后永久跳过注册且毫无报错（浏览器那边只

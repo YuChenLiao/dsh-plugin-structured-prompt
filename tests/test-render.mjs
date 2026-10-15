@@ -19,21 +19,35 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 
 const CLIENT = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'client')
-const { createStructuredInputStore } = await import(pathToFileURL(resolve(CLIENT, 'store.ts')).href)
+const STRUCTURED = resolve(CLIENT, '..', 'components', 'structured')
+const LIBRARY = resolve(CLIENT, '..', 'components', 'library')
+const SHARED = resolve(CLIENT, '..', 'shared')
+const { createStructuredInputStore } = await import(
+  pathToFileURL(resolve(STRUCTURED, 'client', 'store.ts')).href
+)
+const { createLibraryStore } = await import(
+  pathToFileURL(resolve(LIBRARY, 'client', 'store.ts')).href
+)
 const { StructuredInputPanel } = await import(
-  pathToFileURL(resolve(CLIENT, 'ui', 'Panel.tsx')).href
+  pathToFileURL(resolve(STRUCTURED, 'client', 'ui', 'Panel.tsx')).href
 )
 const { StructuredInputTrigger } = await import(
-  pathToFileURL(resolve(CLIENT, 'ui', 'Trigger.tsx')).href
+  pathToFileURL(resolve(STRUCTURED, 'client', 'ui', 'Trigger.tsx')).href
 )
-const { sectionStyle, modalBodyStyle } = await import(
-  pathToFileURL(resolve(CLIENT, 'ui', 'styles.ts')).href
+const { LibraryPanel } = await import(
+  pathToFileURL(resolve(LIBRARY, 'client', 'ui', 'Panel.tsx')).href
+)
+const { LibraryTrigger } = await import(
+  pathToFileURL(resolve(LIBRARY, 'client', 'ui', 'Trigger.tsx')).href
+)
+const { sectionStyle, modalBodyStyle, PANEL_CSS } = await import(
+  pathToFileURL(resolve(SHARED, 'ui', 'styles.ts')).href
 )
 const { TEMPLATES } = await import(
-  pathToFileURL(resolve(CLIENT, '..', 'shared', 'templates.ts')).href
+  pathToFileURL(resolve(STRUCTURED, 'shared', 'templates.ts')).href
 )
 const { buildSystemPromptSections, renderPrompt } = await import(
-  pathToFileURL(resolve(CLIENT, '..', 'shared', 'prompt.ts')).href
+  pathToFileURL(resolve(STRUCTURED, 'shared', 'prompt.ts')).href
 )
 
 let failed = 0
@@ -53,7 +67,9 @@ function render(element) {
 
 const store = createStructuredInputStore()
 const instance = store.create('session-test')
-/** 已发送的成稿（面板把宿主的 onSend 透传给弹窗）。 */
+const libraryStore = createLibraryStore()
+const libraryInstance = libraryStore.create('session-test')
+/** 已发送的内容（两个组件的面板都把宿主的 onSend 透传给弹窗）。 */
 const sent = []
 const onSend = (text) => { sent.push(text) }
 
@@ -70,6 +86,20 @@ function propsFor(extra = {}) {
 
 const trigger = extra => render(createElement(StructuredInputTrigger, propsFor(extra)))
 const panel = extra => render(createElement(StructuredInputPanel, propsFor(extra)))
+
+/** 提示词库组件的座位：它有自己的 store 与动作，因此要与结构化组件分别构造。 */
+function libraryPropsFor(extra = {}) {
+  return {
+    useStore: selector => selector(libraryInstance.getSnapshot()),
+    actions: libraryInstance.actions,
+    onSend,
+    sessionId: 'session-test',
+    ...extra,
+  }
+}
+
+const libraryTrigger = extra => render(createElement(LibraryTrigger, libraryPropsFor(extra)))
+const libraryPanel = extra => render(createElement(LibraryPanel, libraryPropsFor(extra)))
 
 // ---- 1) 入口按钮（输入框底部工具栏）----
 
@@ -161,6 +191,30 @@ check('弹窗内容区可在弹窗内收缩（flex + minHeight:0）',
 check('弹窗内容区预留滚动条槽位（内容增减不跳动）',
   modalBodyStyle.scrollbarGutter === 'stable')
 check('滚动容器挂到了弹窗内容区', modal.html.includes('data-scroll=""'))
+
+// 注入样式（PANEL_CSS）的**选择器语义**。v0.4.0 的阻断正是出在这里：把「后代选择器」写成了逗号
+// 分隔的列表后，裸的 `[data-…-modal]` 会**无条件命中弹窗根元素**，于是弹窗拿到了滚动条的
+// `width/height` 与禁用按钮的 `opacity` —— 真实浏览器里塌成 10px 高、半透明，而八套测试全绿。
+// 规则：只由共享属性组成的项，不许出现在多项选择器列表里。
+// 先**剥掉注释**再按块切分。这一点本身就是个教训：原先用 `.filter(text => !text.includes('*'))`
+// 排除注释，而第一轮那条错法（裸属性混进滚动条那段）恰好写在注释之后 —— 整段被丢掉，于是这条断言
+// 对真正的回归**零红**（复审用副本突变实测发现）。剥注释是唯一正确的过滤方式。
+const cssGroups = PANEL_CSS
+  .replace(/\/\*[\s\S]*?\*\//g, '')
+  .split('}')
+  .map(chunk => (chunk.split('{')[0] ?? '').trim())
+  .filter(text => text !== '')
+const bareSharedSelectors = cssGroups.filter((group) => {
+  const items = group.split(',').map(item => item.trim()).filter(item => item !== '')
+  return items.length > 1 && items.some(item => /^\[data-dsh-prompt-(panel|trigger)\]$/.test(item))
+})
+check('PANEL_CSS 不把裸共享属性混进选择器列表（否则无条件命中元素自身）',
+  bareSharedSelectors.length === 0, bareSharedSelectors.join(' || '))
+check('PANEL_CSS 的选择器都锚在共享属性上（将来加组件不必改样式）',
+  cssGroups.length > 0 && cssGroups.every(group => group.includes('[data-dsh-prompt-')),
+  cssGroups.filter(group => !group.includes('[data-dsh-prompt-')).join(' || '))
+check('表单弹窗根带共享属性 data-dsh-prompt-panel（样式才覆盖得到）',
+  modal.html.includes('data-dsh-prompt-panel'))
 
 // ---- 5) 工具策略：自动（模型判断）/ 手动（用户点名工具）----
 
@@ -384,7 +438,7 @@ check('补回字段值后预览区重新出现正文',
   restoredHtml.includes('# 身份') && restoredHtml.includes('身份示例'), restoredHtml.slice(0, 160))
 
 // 剪贴板降级：Node 里没有 navigator.clipboard，应走 execCommand 路径而不是抛错。
-const { copyText } = await import(pathToFileURL(resolve(CLIENT, 'ui', 'clipboard.ts')).href)
+const { copyText } = await import(pathToFileURL(resolve(SHARED, 'ui', 'clipboard.ts')).href)
 check('空文本不写剪贴板', (await copyText('')) === false)
 const copied = []
 const originalDoc = globalThis.document
@@ -436,29 +490,45 @@ check('17 个字段各自有 DOM 锚点（展开全部分组）', (() => {
 
 // ---- 8) 提示词库弹窗 ----
 //
+// 这一节渲染的是**另一个组件**（LibraryPanel / LibraryTrigger）：拆分后两个组件各有自己的
+// store 与动作，测试也必须分别驱动 —— 用结构化组件的实例去驱动它会什么都测不到。
+const libraryOk = () => {
+  const out = libraryPanel()
+  return out.error === null ? out.html : `render-failed: ${String(out.error)}`
+}
+const libraryFailed = html => html.startsWith('render-failed')
+//
 // 检索走宿主代发的同源路由，SSR 里不会真发请求；这里用 store 驱动界面状态，覆盖四种渲染：
-// 入口按钮、列表（含失败态）、详情、以及两个弹窗的互斥。网络层的行为由工具套断言。
+// 入口按钮、列表（含失败态）、详情，以及「两个组件互不干涉」。网络层的行为由工具套断言。
 instance.actions.close()
 const triggerHtml = (() => {
-  const out = trigger()
+  const out = libraryTrigger()
   return out.error === null ? out.html : `render-failed: ${String(out.error)}`
 })()
 check('入口有「提示词库」按钮',
-  !renderFailed(triggerHtml)
+  !libraryFailed(triggerHtml)
   && triggerHtml.includes('data-structured-prompt-library-trigger')
   && triggerHtml.includes('提示词库'),
   triggerHtml.slice(0, 200))
 
-instance.actions.openLibrary()
-const libraryOpen = okHtml()
+libraryInstance.actions.open()
+const libraryOpen = libraryOk()
 check('打开检索弹窗',
-  !renderFailed(libraryOpen) && libraryOpen.includes('data-structured-prompt-library'),
+  !libraryFailed(libraryOpen) && libraryOpen.includes('data-structured-prompt-library'),
   libraryOpen.slice(0, 160))
-check('打开检索弹窗时表单弹窗不渲染（两者互斥）',
-  !renderFailed(libraryOpen)
+// 拆分后两个组件**各管各的**：检索弹窗里不该出现表单弹窗的任何标记；而"打开一个不会改动另一个
+// 组件的开关"才是有意义的证据 —— 只断言前者是恒真的（库弹窗本来就不含表单的标记）。
+check('检索弹窗只渲染自己的内容（不含表单弹窗的标记）',
+  !libraryFailed(libraryOpen)
   && !libraryOpen.includes('data-structured-prompt-modal')
   && !libraryOpen.includes('结构化输入任务'),
   libraryOpen.slice(0, 160))
+check('检索弹窗根带共享属性 data-dsh-prompt-panel',
+  !libraryFailed(libraryOpen) && libraryOpen.includes('data-dsh-prompt-panel'))
+check('两个组件的开关互不影响（各自一个 store）',
+  libraryInstance.getSnapshot().active === true && instance.getSnapshot().active === false,
+  `library.active=${String(libraryInstance.getSnapshot().active)}`
+  + ` form.active=${String(instance.getSnapshot().active)}`)
 check('检索弹窗有搜索框与检索按钮',
   libraryOpen.includes('aria-label="检索提示词"') && libraryOpen.includes('>检索<'))
 check('未检索时给出用法提示', libraryOpen.includes('留空则列出最新的一批'))
@@ -467,7 +537,7 @@ check('底部说明请求由宿主代发', libraryOpen.includes('请求由宿主
 // 假数据用**上游检索端点的真实字段形状**：`/api/prompts/search` 的条目只有
 // id/title/slug/author，没有 description（实测）—— 用带 description 的假数据会掩盖
 // "真实界面里列表只有标题与作者"这个事实。
-instance.actions.patchLibrary({
+libraryInstance.actions.patch({
   status: 'ready',
   total: 12,
   items: [
@@ -475,39 +545,39 @@ instance.actions.patchLibrary({
     { id: 'a2', title: '文章大纲', description: '', author: '' },
   ],
 })
-const listed = okHtml()
+const listed = libraryOk()
 check('列表渲染标题与作者（上游检索端点不给描述）',
-  !renderFailed(listed) && listed.includes('Code Review Expert') && listed.includes('@alice'),
+  !libraryFailed(listed) && listed.includes('Code Review Expert') && listed.includes('@alice'),
   listed.slice(0, 160))
 check('无描述的条目不留下 undefined 字样',
-  !renderFailed(listed) && !listed.includes('undefined'))
+  !libraryFailed(listed) && !listed.includes('undefined'))
 // 容错路径：上游哪天给了 description，界面照样渲染（`mapItem` 保留该字段）。
-instance.actions.patchLibrary({
+libraryInstance.actions.patch({
   status: 'ready',
   items: [{ id: 'a1', title: 'T', description: '上游给了描述', author: '' }],
 })
-const described = okHtml()
+const described = libraryOk()
 check('上游给了描述时也渲染（mapItem 保留该字段）',
-  !renderFailed(described) && described.includes('上游给了描述'), described.slice(0, 160))
+  !libraryFailed(described) && described.includes('上游给了描述'), described.slice(0, 160))
 check('列表显示总数与显示条数', listed.includes('共 12 条') && listed.includes('显示前 2 条'))
 check('条目带可定位的锚点', listed.includes('data-library-item="a1"'))
 
 // 来源标注跟着响应里的 source 走（宿主按配置回填），不是写死在客户端。
-instance.actions.patchLibrary({ status: 'ready', source: 'prompts.chat' })
-const sourced = okHtml()
+libraryInstance.actions.patch({ status: 'ready', source: 'prompts.chat' })
+const sourced = libraryOk()
 check('列表底部标注数据来源（来自响应，不是写死）',
-  !renderFailed(sourced) && sourced.includes('来源：prompts.chat'), sourced.slice(0, 200))
-instance.actions.patchLibrary({ source: 'self.example' })
-const selfSourced = okHtml()
+  !libraryFailed(sourced) && sourced.includes('来源：prompts.chat'), sourced.slice(0, 200))
+libraryInstance.actions.patch({ source: 'self.example' })
+const selfSourced = libraryOk()
 check('来源名随响应变化（自托管时不显示默认域名）',
-  !renderFailed(selfSourced) && !selfSourced.includes('prompts.chat'), selfSourced.slice(0, 200))
+  !libraryFailed(selfSourced) && !selfSourced.includes('prompts.chat'), selfSourced.slice(0, 200))
 
-instance.actions.patchLibrary({ status: 'failed', failure: '上游 503', items: [], total: 0 })
-const failedHtml = okHtml()
+libraryInstance.actions.patch({ status: 'failed', failure: '上游 503', items: [], total: 0 })
+const failedHtml = libraryOk()
 check('失败态显示说明',
-  !renderFailed(failedHtml) && failedHtml.includes('上游 503'), failedHtml.slice(0, 160))
+  !libraryFailed(failedHtml) && failedHtml.includes('上游 503'), failedHtml.slice(0, 160))
 
-instance.actions.patchLibrary({
+libraryInstance.actions.patch({
   status: 'ready',
   selectedId: 'a1',
   detailStatus: 'ready',
@@ -515,9 +585,9 @@ instance.actions.patchLibrary({
     id: 'a1', title: 'Code Review Expert', description: '', author: 'alice', content: 'PREVIEW BODY',
   },
 })
-const libraryDetail = okHtml()
+const libraryDetail = libraryOk()
 check('详情视图渲染原文',
-  !renderFailed(libraryDetail)
+  !libraryFailed(libraryDetail)
   && libraryDetail.includes('data-library-content') && libraryDetail.includes('PREVIEW BODY'),
   libraryDetail.slice(0, 160))
 check('详情视图说明原文未经整理', libraryDetail.includes('未经本插件整理'))
@@ -531,13 +601,13 @@ check('详情视图里的原文与 detail.content 逐字一致',
   shownContent === 'PREVIEW BODY', shownContent.slice(0, 80))
 // 上游地址是宿主侧配置（可指向自托管实例），界面文案不该写死默认域名。
 check('界面不写死上游域名（可指向自托管实例）',
-  !renderFailed(libraryDetail) && !renderFailed(libraryOpen)
+  !libraryFailed(libraryDetail) && !libraryFailed(libraryOpen)
   && !libraryDetail.includes('prompts.chat') && !libraryOpen.includes('prompts.chat'))
 // 检索到的原文**不进入构建器**：详情视图里不该出现表单产物（两条产出路径互不干涉）。
 check('详情视图不渲染提示词成稿（两条产出路径互不干涉）',
-  !renderFailed(libraryDetail) && !libraryDetail.includes('# 硬性规则'))
+  !libraryFailed(libraryDetail) && !libraryDetail.includes('# 硬性规则'))
 
-instance.actions.closeLibrary()
+libraryInstance.actions.close()
 check('关闭检索弹窗后不占空间', panel().html === '')
 
 if (failed > 0) {

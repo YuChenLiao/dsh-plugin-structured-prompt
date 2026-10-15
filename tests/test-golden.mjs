@@ -17,13 +17,13 @@ import { fileURLToPath } from 'node:url'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const GOLDEN_DIR = join(HERE, 'golden')
-const SRC = resolve(HERE, '..', 'src', 'shared')
+const SRC = resolve(HERE, '..', 'src', 'components', 'structured', 'shared')
 
 const { buildSystemPrompt } = await import(pathToFileURL(resolve(SRC, 'prompt.ts')).href)
 const { completeForm } = await import(pathToFileURL(resolve(SRC, 'forms.ts')).href)
 const { TEMPLATES } = await import(pathToFileURL(resolve(SRC, 'templates.ts')).href)
-const { narrowArgs } = await import(pathToFileURL(resolve(HERE, '..', 'src', 'host', 'args.ts')).href)
-const { buildFromArgs } = await import(pathToFileURL(resolve(HERE, '..', 'src', 'host', 'build.ts')).href)
+const { narrowArgs } = await import(pathToFileURL(resolve(HERE, '..', 'src', 'components', 'structured', 'host', 'args.ts')).href)
+const { buildFromArgs } = await import(pathToFileURL(resolve(HERE, '..', 'src', 'components', 'structured', 'host', 'build.ts')).href)
 const { CASES } = await import(pathToFileURL(join(GOLDEN_DIR, 'cases.mjs')).href)
 
 const update = process.argv.includes('--update')

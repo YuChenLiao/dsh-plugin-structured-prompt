@@ -84,45 +84,78 @@ try {
   applyError = error
 }
 check('apply() 不抛错', applyError === null, applyError === null ? '' : String(applyError))
-check('apply() 注册了两个槽位', bench.registrations.length === 2, `实际 ${bench.registrations.length}`)
-check('apply() 处理了两个 inject 目标', bench.injected.length === 2, bench.injected.join(', '))
+check('apply() 注册了四个槽位（两个组件各两条）',
+  bench.registrations.length === 4, `实际 ${bench.registrations.length}`)
+check('apply() 处理了四个 inject 目标', bench.injected.length === 4, bench.injected.join(', '))
 check('apply() 注入了样式 effect',
   bench.effects.includes('structured-prompt: styles'), bench.effects.join(' | '))
 
 // ---- 2) 关键契约：每个注册都声明 store（否则 useStore 为 undefined）----
 
 for (const { options } of bench.registrations) {
-  check(`注册「${options.name}」声明了 store 座位`,
+  check(`注册「${options.name}」(${options.id}) 声明了 store 座位`,
     options.store !== undefined && typeof options.store.create === 'function')
 }
-const handles = new Set(bench.registrations.map(entry => entry.options.store))
-check('两个注册共用同一个 store 句柄（实例才会共享）', handles.size === 1, `句柄数 ${handles.size}`)
+// 拆分后**每个组件各有自己的 store 句柄**：同一组件的两条注册必须共用它（否则实例不共享、
+// 入口驱动不了弹窗），两个组件之间必须是**不同**句柄（否则状态又耦合回去，那正是这次拆分的理由）。
+const byId = new Map()
+for (const entry of bench.registrations) {
+  const id = String(entry.options.id)
+  byId.set(id, [...(byId.get(id) ?? []), entry])
+}
+check('注册分属两个组件（各两条：入口 + 弹窗）',
+  byId.size === 2 && [...byId.values()].every(bucket => bucket.length === 2),
+  [...byId.entries()].map(([id, list]) => `${id}×${list.length}`).join(', '))
+check('同一组件的两条注册共用同一个 store 句柄',
+  [...byId.values()].every(bucket => new Set(bucket.map(entry => entry.options.store)).size === 1))
+check('两个组件用的是不同句柄（状态不耦合）',
+  new Set(bench.registrations.map(entry => entry.options.store)).size === 2)
+// 句柄的**行为契约**：只比"句柄相同/不同"抓不到"把库组件的 store 换成结构化的"—— 那两者都是
+// 合法句柄、句柄也仍然不同，只是绑错了（实测这种变异在运行期的其它断言里 0 条红）。所以按组件
+// 断言各自动作表里该有的动作。注意动作表在**实例**上（`handle.create(sessionId).actions`）。
+const actionsOf = entry => Object.keys(entry.options.store.create('probe').actions ?? {})
+const actionsById = new Map([...byId.entries()].map(([id, bucket]) => [id, actionsOf(bucket[0])]))
+check('结构化组件的 store 提供表单动作（setForm / setField / addTool）',
+  ['setForm', 'setField', 'addTool'].every(name => actionsById.get('structured-prompt')?.includes(name)),
+  JSON.stringify(actionsById.get('structured-prompt')))
+check('提示词库组件的 store 提供检索动作（patch / backToList）',
+  ['patch', 'backToList', 'open', 'close'].every(name => actionsById.get('prompt-library')?.includes(name)),
+  JSON.stringify(actionsById.get('prompt-library')))
+check('每个组件的入口与弹窗占两个不同槽位',
+  [...byId.values()].every(bucket =>
+    new Set(bucket.map(entry => entry.options.name)).size === 2
+    && bucket.some(entry => entry.options.name === 'conversation.input.left')
+    && bucket.some(entry => entry.options.name === 'conversation.input.dock')))
 
 // ---- 3) 注册表与预期一一对应 ----
 
-const byName = new Map(bench.registrations.map(entry => [entry.options.name, entry]))
-check('注册了输入框工具栏入口', byName.has('conversation.input.left'))
-check('注册了表单弹窗挂载点', byName.has('conversation.input.dock'))
-check('入口与弹窗使用不同组件',
-  byName.get('conversation.input.left')?.component !== byName.get('conversation.input.dock')?.component)
-check('入口与弹窗使用同一个 id（各自槽位内唯一）',
-  byName.get('conversation.input.left')?.options.id === 'structured-prompt'
-  && byName.get('conversation.input.dock')?.options.id === 'structured-prompt')
+const docks = [...byId.values()].map(bucket =>
+  bucket.find(entry => entry.options.name === 'conversation.input.dock'))
+check('两个组件都注册了弹窗挂载点', docks.length === 2 && docks.every(entry => entry !== undefined))
+check('入口与弹窗使用不同组件', [...byId.values()].every(bucket => {
+  const left = bucket.find(entry => entry.options.name === 'conversation.input.left')
+  const dock = bucket.find(entry => entry.options.name === 'conversation.input.dock')
+  return left?.component !== undefined && dock?.component !== undefined && left.component !== dock.component
+}))
 
-// ---- 3b) 发送链路：注入面把成稿投进该会话 ----
+// ---- 3b) 发送链路：每个组件的 inject 面都把内容投进该会话 ----
 
-const dockInject = byName.get('conversation.input.dock')?.options.inject
-check('弹窗注册带 inject 面（发送能力）', typeof dockInject === 'function')
-const face = dockInject?.('session-abc')
-check('inject 面暴露 onSend', typeof face?.onSend === 'function')
-face?.onSend('成稿正文')
+for (const dock of docks) {
+  const id = String(dock?.options.id)
+  const dockInject = dock?.options.inject
+  check(`「${id}」的弹窗注册带 inject 面（发送能力）`, typeof dockInject === 'function')
+  const face = dockInject?.('session-abc')
+  check(`「${id}」的 inject 面暴露 onSend`, typeof face?.onSend === 'function')
+  face?.onSend(`来自 ${id} 的正文`)
+}
 // conversation.send 是异步的：等一轮微任务后检查投递。
 await Promise.resolve()
 await Promise.resolve()
-check('onSend 把成稿交给会话的 conversation.send', bench.sent[0] === '成稿正文',
+check('onSend 把内容交给会话的 conversation.send',
+  bench.sent.length === 2 && bench.sent.every(text => String(text).startsWith('来自 ')),
   JSON.stringify(bench.sent))
 // 会话取不到时不应抛错，只记录日志（避免拖垮整个 apply）。
-const missingFace = dockInject?.('session-not-found')
+const missingFace = docks[0]?.options.inject?.('session-not-found')
 let sendError = null
 try {
   missingFace?.onSend('成稿正文')

@@ -19,7 +19,7 @@ import { pathToFileURL } from 'node:url'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const SRC = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'shared')
+const SRC = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'components', 'structured', 'shared')
 const forms = await import(pathToFileURL(resolve(SRC, 'forms.ts')).href)
 const { TEMPLATES } = await import(pathToFileURL(resolve(SRC, 'templates.ts')).href)
 const { OUTPUT_FORMAT_SKELETONS } = await import(pathToFileURL(resolve(SRC, 'prompt.ts')).href)
@@ -155,7 +155,7 @@ check('空白表单往返无告警', emptyDoc.warnings.length === 0, emptyDoc.wa
 
 const { readFileSync, readdirSync, statSync, existsSync } = await import('node:fs')
 
-const PLUGIN_ROOT = resolve(SRC, '..', '..')
+const PLUGIN_ROOT = resolve(SRC, '..', '..', '..', '..')
 const readme = readFileSync(resolve(PLUGIN_ROOT, 'README.md'), 'utf8')
 const manifest = JSON.parse(readFileSync(resolve(PLUGIN_ROOT, 'package.json'), 'utf8'))
 
@@ -188,9 +188,15 @@ const importEntry = async (label, url) => {
 }
 
 const clientModule = await importEntry(
-  '客户端入口', pathToFileURL(resolve(SRC, '..', 'client', 'index.ts')).href,
+  '客户端入口', pathToFileURL(resolve(SRC, '..', '..', '..', 'client', 'index.ts')).href,
 )
 const hostModule = await importEntry('host 入口', pathToFileURL(resolve(SRC, '..', 'index.ts')).href)
+const structuredModule = await importEntry(
+  '结构化组件入口', pathToFileURL(resolve(SRC, '..', 'index.ts')).href,
+)
+const libraryModule = await importEntry(
+  '提示词库组件入口', pathToFileURL(resolve(SRC, '..', '..', 'library', 'index.ts')).href,
+)
 const { SECTIONS } = (await importEntry(
   '分组元数据', pathToFileURL(resolve(SRC, '..', 'client', 'ui', 'config.ts')).href,
 )) ?? {}
@@ -222,23 +228,26 @@ check('README 的模板数量与实际一致',
   declaredTemplates > 0 && declaredTemplates === TEMPLATES.length,
   `README=${declaredTemplates} 实际=${TEMPLATES.length}`)
 
-// 槽位：README 提到的 `conversation.input.*` 必须正好是实际注册的两个；架构表里逐行给出的
-// 槽位也要与注册一一对应（只比较去重后的集合会漏掉"表格里两行写成同一个键"）。
+// 槽位：README 提到的 `conversation.input.*` 必须正好是实际注册的那些。拆分后**每个槽位键会被
+// 注册两次**（两个组件各一条），所以这里比的是去重后的集合；而架构表必须逐行列出全部注册
+// （行数 == 注册数），少写一行或多写一行都会红。
 const registeredSlots = clientModule === null
   ? []
-  : clientModule.slotEntries({ create: () => ({}) }, () => {}).map(entry => entry.name).sort()
+  : clientModule.slotEntries(() => {}).map(entry => entry.name)
+const uniqueSlots = [...new Set(registeredSlots)].sort()
 const readmeSlots = [...new Set(
   [...readme.matchAll(/`(conversation\.input\.[a-z.]+)`/g)].map(match => match[1]),
 )].sort()
 check('README 的槽位键与注册的槽位一致',
-  registeredSlots.length > 0 && readmeSlots.join(',') === registeredSlots.join(','),
-  `README=${readmeSlots.join(',')} 实际=${registeredSlots.join(',')}`)
+  uniqueSlots.length > 0 && readmeSlots.join(',') === uniqueSlots.join(','),
+  `README=${readmeSlots.join(',')} 实际=${uniqueSlots.join(',')}`)
 const slotTableKeys = [...readme.matchAll(/\| `(conversation\.input\.[a-z.]+)`（list） \|/g)]
   .map(match => match[1])
-check('README 架构表的槽位行与注册一一对应',
+check('README 架构表的槽位行与注册一一对应（四条注册各一行）',
   slotTableKeys.length === registeredSlots.length
-  && [...slotTableKeys].sort().join(',') === registeredSlots.join(','),
-  `表格=${slotTableKeys.join(',')} 实际=${registeredSlots.join(',')}`)
+  && [...new Set(slotTableKeys)].sort().join(',') === uniqueSlots.join(','),
+  `表格 ${slotTableKeys.length} 行=${slotTableKeys.join(',')}`
+  + ` 实际 ${registeredSlots.length} 条=${registeredSlots.join(',')}`)
 
 // 工具返回形状：README 表格里列的字段名必须等于输出 schema 的 required。
 const declaredReturn = (/`\{ ([\w, ]+) \}`/.exec(readme)?.[1] ?? '')
@@ -258,9 +267,13 @@ check('README 提到的工具名与实际一致',
 // 了"会让别处的错值漏检。
 const declaredInjects = [...readme.matchAll(/inject: \[([^\]]*)\]/g)]
   .map(match => (match[1] ?? '').replace(/['\s]/g, ''))
+// 四条来源都要算进来：client 聚合入口、host 聚合入口，以及两个**组件入口** —— 组件入口才是
+// 装载行里被 Loader 直接调用的那层，各自的 inject 可以不同（提示词库组件就是空数组）。
 const actualInjects = new Set([
   (clientModule?.inject ?? []).join(','),
   (hostModule?.inject ?? []).join(','),
+  (structuredModule?.inject ?? []).join(','),
+  (libraryModule?.inject ?? []).join(','),
 ])
 check('README 里出现的 inject 声明都与实现一致',
   declaredInjects.length > 0 && declaredInjects.every(value => actualInjects.has(value)),
