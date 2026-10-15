@@ -891,6 +891,397 @@ check('registerStructuredPromptTool 注册了一个工具', registered.length ==
 check('注册的正是本工具', registered[0]?.name === toolModule.STRUCTURED_PROMPT_TOOL)
 check('返回取消注册函数', typeof disposer === 'function')
 
+// ---- 8) 提示词库：上游映射、路由与配置 ----
+//
+// 被测对象是 **host 半边的检索路由**。它必须由宿主代发（上游 prompts.chat 不返回 CORS 头，
+// 浏览器直连会被拒），所以断言分三层：纯映射与参数夹取、路由 handler 的上游 URL 与失败归一、
+// 以及注册面（有 `connection` 才注册、没有就跳过 —— 与 `delegate` 走 `ctx.get` 是同一条规则）。
+
+const libraryModule = await import(pathToFileURL(resolve(SRC, 'host', 'library.ts')).href)
+const lib = await import(pathToFileURL(resolve(SRC, 'shared', 'library.ts')).href)
+
+check('条数被夹进上游可接受的范围',
+  lib.clampLimit(undefined) === lib.LIBRARY_DEFAULT_LIMIT
+  && lib.clampLimit(0) === 1 && lib.clampLimit(-3) === 1
+  && lib.clampLimit(9999) === lib.LIBRARY_MAX_LIMIT
+  && lib.clampLimit(Number.NaN) === lib.LIBRARY_DEFAULT_LIMIT,
+  [undefined, 0, -3, 9999, Number.NaN].map(v => `${String(v)}→${lib.clampLimit(v)}`).join(' '))
+
+check('查询词折叠空白并截断',
+  lib.normalizeQuery('  code   review  ') === 'code review'
+  && lib.normalizeQuery('   ') === ''
+  && lib.normalizeQuery('x'.repeat(200)).length === lib.LIBRARY_MAX_QUERY_LENGTH)
+
+// id 会被拼进上游 URL 的**路径**，这是路径注入的口子，必须在边界上挡死。
+check('非法 id 被拒（含路径注入）',
+  lib.isValidItemId('cmv8u3ofi0007kx06jghws9ya')
+  && !lib.isValidItemId('../secret')
+  && !lib.isValidItemId('a/b')
+  && !lib.isValidItemId('a?x=1')
+  && !lib.isValidItemId('')
+  && !lib.isValidItemId('x'.repeat(65)))
+
+check('上游记录映射成稳定形状', (() => {
+  const item = lib.mapItem({ id: 'abc', title: 'T', description: 'D', author: { username: 'u' } })
+  return item !== undefined && item.id === 'abc' && item.title === 'T'
+    && item.description === 'D' && item.author === 'u'
+})(), JSON.stringify(lib.mapItem({ id: 'abc', title: 'T' })))
+
+check('字段缺失时给空串而不是 undefined', (() => {
+  const item = lib.mapItem({ id: 'abc' })
+  return item !== undefined && item.title === '' && item.description === '' && item.author === ''
+})())
+
+check('列表映射逐条过滤坏记录（一条坏的不该毁掉整次检索）', (() => {
+  const result = lib.mapSearchResponse({
+    prompts: [{ id: 'ok', title: 'T' }, null, 7, { id: '../x' }, { title: 'no id' }],
+    total: 12,
+  })
+  return result.items.length === 1 && result.items[0].id === 'ok' && result.total === 12
+})(), JSON.stringify(lib.mapSearchResponse({ prompts: [null] })))
+
+check('详情缺 content 时不算详情',
+  lib.mapDetail({ id: 'abc', title: 'T' }) === undefined
+  && lib.mapDetail({ id: 'abc', content: '正文' })?.content === '正文')
+
+// 路由 handler：上游 URL、失败归一，以及"不转发浏览器请求头"。
+const upstreamCalls = []
+/**
+ * 造一个记录调用的假上游。
+ * @param body - 上游响应体。
+ * @param status - 上游状态码。
+ * @param failure - 传了 Error 表示请求本身失败。
+ * @returns 请求实现。
+ */
+const makeUpstream = (body, status = 200, failure) => (url, options) => {
+  upstreamCalls.push({ url: String(url), options })
+  if (failure !== undefined) return Promise.reject(failure)
+  return Promise.resolve(new Response(JSON.stringify(body), {
+    status,
+    headers: { 'content-type': 'application/json' },
+  }))
+}
+/**
+ * 造一条检索路由的请求。
+ *
+ * 刻意用**鸭子类型的假请求**（而不是 `new Request`）：`new Request` 会按 fetch 规范丢掉部分
+ * forbidden header（例如 `cookie`），用它就证明不了「不转发入站头」—— 而那条断言要证明的恰恰
+ * 是"实现读不读入站头"。假请求带真实的 `Headers`，因此能如实携带敏感头。
+ * @param query - 查询串（含 `?`）。
+ * @param headers - 入站头（模拟浏览器带来的）。
+ * @param method - HTTP 方法。
+ * @returns 请求对象。
+ */
+const searchRequest = (query, headers, method = 'GET') => ({
+  method,
+  url: `http://127.0.0.1:19387/api/structured-prompt/library${query}`,
+  signal: new AbortController().signal,
+  headers: new Headers(headers ?? {}),
+})
+
+/**
+ * 造一条取全文路由的请求（同上，鸭子类型）。
+ * @param id - 查询的 id（需要编码的部分由调用方写好）。
+ * @returns 请求对象。
+ */
+const libraryItemRequest = id => ({
+  method: 'GET',
+  url: `http://127.0.0.1:19387/api/structured-prompt/library/item?id=${id}`,
+  signal: new AbortController().signal,
+  headers: new Headers(),
+})
+
+const hit = await libraryModule.handleLibrarySearch(
+  searchRequest('?q=code+review&limit=5'), undefined,
+  makeUpstream({ prompts: [{ id: 'a1', title: 'T' }], total: 3 }),
+)
+check('检索路由把查询词交给上游的 title 检索端点',
+  upstreamCalls.at(-1).url === 'https://prompts.chat/api/prompts/search?q=code+review&limit=5',
+  String(upstreamCalls.at(-1).url))
+check('检索路由回映射后的结果', JSON.parse(await hit.text()).items[0].id === 'a1')
+
+await libraryModule.handleLibrarySearch(searchRequest(''), undefined, makeUpstream({ prompts: [] }))
+check('空查询走列表端点（打开就有东西可看）',
+  upstreamCalls.at(-1).url === `https://prompts.chat/api/prompts?perPage=${lib.LIBRARY_DEFAULT_LIMIT}`,
+  String(upstreamCalls.at(-1).url))
+
+// 不跟随重定向：跟随就等于绕开配置里的地址（302 能把请求带去任意主机）。
+check('上游请求不跟随重定向（302 不能把请求带去别处）',
+  upstreamCalls.at(-1).options.redirect === 'error',
+  String(upstreamCalls.at(-1).options.redirect))
+
+// 上游回非 JSON：归一成 502 与可读说明，而不是让 `response.json()` 的异常冒出去。
+const notJsonResponse = await libraryModule.handleLibrarySearch(
+  searchRequest('?q=x'),
+  undefined,
+  (url, options) => {
+    upstreamCalls.push({ url: String(url), options })
+    return Promise.resolve(new Response('<html>not json</html>', {
+      status: 200,
+      headers: { 'content-type': 'text/html' },
+    }))
+  },
+)
+const notJsonBody = await notJsonResponse.text()
+check('上游回非 JSON 时给 502 与可读说明',
+  notJsonResponse.status === 502 && notJsonBody.includes('不是 JSON'),
+  `${notJsonResponse.status} ${notJsonBody}`)
+
+// 浏览器已经取消：给出"已取消"而不是把它当成"上游挂了"。
+const cancelledController = new AbortController()
+cancelledController.abort()
+const cancelledRequest = {
+  method: 'GET',
+  url: 'http://127.0.0.1:19387/api/structured-prompt/library?q=x',
+  signal: cancelledController.signal,
+  headers: new Headers(),
+}
+const abortError = new Error('aborted')
+abortError.name = 'AbortError'
+const cancelledResponse = await libraryModule.handleLibrarySearch(
+  cancelledRequest,
+  undefined,
+  (url, options) => {
+    upstreamCalls.push({ url: String(url), options })
+    return Promise.reject(abortError)
+  },
+)
+const cancelledBody = await cancelledResponse.text()
+check('浏览器已取消时给出取消说明（不冒充上游故障）',
+  cancelledResponse.status === 499 && cancelledBody.includes('已取消'),
+  `${cancelledResponse.status} ${cancelledBody}`)
+
+const upstreamError = await libraryModule.handleLibrarySearch(
+  searchRequest('?q=x'), undefined, makeUpstream({}, 500),
+)
+// `Response.body` 只能读一次：先取文本，让断言与 detail 共用同一个字符串，
+// 否则第二次 `text()` 抛 "Body is unusable"（本批踩到过）。
+const upstreamErrorBody = await upstreamError.text()
+check('上游非 2xx 归一成 502 与可读说明',
+  upstreamError.status === 502 && upstreamErrorBody.includes('500'),
+  `${upstreamError.status} ${upstreamErrorBody}`)
+
+const networkError = await libraryModule.handleLibrarySearch(
+  searchRequest('?q=x'), undefined, makeUpstream({}, 200, new Error('socket hang up')),
+)
+const networkErrorBody = await networkError.text()
+check('网络失败归一成 502（不作为异常抛给浏览器）',
+  networkError.status === 502 && networkErrorBody.includes('无法连接上游'),
+  `${networkError.status} ${networkErrorBody}`)
+
+const timeoutError = new Error('timed out')
+timeoutError.name = 'TimeoutError'
+const timedOut = await libraryModule.handleLibrarySearch(
+  searchRequest('?q=x'), undefined, makeUpstream({}, 200, timeoutError),
+)
+const timedOutBody = await timedOut.text()
+check('超时归一成 504',
+  timedOut.status === 504 && timedOutBody.includes('毫秒内没有响应'),
+  `${timedOut.status} ${timedOutBody}`)
+
+// 入站头要真的带上才谈得上"不转发"：`new Request` 会丢掉 `cookie` 这类 forbidden header，
+// 所以这里用鸭子类型的假请求（带真实 `Headers`），并断言上游**只**收到 `accept`。
+const sensitiveHeaders = {
+  cookie: 'dsh_browser=secret',
+  authorization: 'Bearer secret',
+  origin: 'http://127.0.0.1:19387',
+  'x-forwarded-for': '10.0.0.1',
+  'user-agent': 'browser',
+}
+await libraryModule.handleLibrarySearch(
+  searchRequest('?q=x', sensitiveHeaders), undefined, makeUpstream({ prompts: [] }),
+)
+check('不向上游转发浏览器请求头（含 cookie）', (() => {
+  const options = upstreamCalls.at(-1).options
+  return options.method === 'GET' && Object.keys(options.headers).join() === 'accept'
+})(), JSON.stringify(upstreamCalls.at(-1).options.headers))
+
+const beforeIllegal = upstreamCalls.length
+const illegal = await libraryModule.handleLibraryItem(
+  new Request('http://127.0.0.1:19387/api/structured-prompt/library/item?id=..%2Fetc'), undefined, makeUpstream({}),
+)
+check('非法 id 在边界被拒且不触碰上游',
+  illegal.status === 400 && upstreamCalls.length === beforeIllegal,
+  `${illegal.status}；期间的上游调用数 ${upstreamCalls.length - beforeIllegal}`)
+
+const detailHit = await libraryModule.handleLibraryItem(
+  libraryItemRequest('a1'),
+  undefined,
+  makeUpstream({ id: 'a1', title: 'T', content: 'BODY' }),
+)
+check('详情路由取到全文', JSON.parse(await detailHit.text()).item.content === 'BODY')
+
+// 真实路径：上游对不存在的 id 返回 **404**（实测），我们透传成 404 —— "记录没了"与
+// "上游挂了"在界面上是两句话。
+const upstreamMissing = await libraryModule.handleLibraryItem(
+  libraryItemRequest('a1'),
+  undefined,
+  makeUpstream({}, 404),
+)
+const upstreamMissingBody = await upstreamMissing.text()
+check('上游 404 时我们回 404（区分记录不存在与上游故障）',
+  upstreamMissing.status === 404 && upstreamMissingBody.includes('上游没有这条提示词'),
+  `${upstreamMissing.status} ${upstreamMissingBody}`)
+
+// 防御支：上游 2xx 但记录里没有正文 —— 那是"上游给的东西不合预期"，不是"没有这条记录"。
+const shapeBroken = await libraryModule.handleLibraryItem(
+  libraryItemRequest('a1'),
+  undefined,
+  makeUpstream({ id: 'a1' }),
+)
+const shapeBrokenBody = await shapeBroken.text()
+check('上游 2xx 但缺正文时给 502（与记录不存在区分开）',
+  shapeBroken.status === 502, `${shapeBroken.status} ${shapeBrokenBody}`)
+
+const wrongMethod = await libraryModule.handleLibrarySearch(
+  new Request('http://127.0.0.1:19387/api/structured-prompt/library', { method: 'POST' }), undefined, makeUpstream({}),
+)
+check('非 GET 被拒（405 且带 allow）',
+  wrongMethod.status === 405 && wrongMethod.headers.get('allow') === 'GET', String(wrongMethod.status))
+
+check('未配置 libraryBaseUrl 时用默认上游',
+  libraryModule.libraryBaseUrl(undefined) === lib.DEFAULT_LIBRARY_BASE_URL
+  && libraryModule.libraryBaseUrl({}) === lib.DEFAULT_LIBRARY_BASE_URL)
+
+await libraryModule.handleLibrarySearch(
+  searchRequest('?q=x'), { libraryBaseUrl: 'https://self.example' }, makeUpstream({ prompts: [] }),
+)
+check('配置了 libraryBaseUrl 时指向自托管实例',
+  upstreamCalls.at(-1).url.startsWith('https://self.example/api/prompts/search'),
+  String(upstreamCalls.at(-1).url))
+
+// 安全边界：基础地址**只来自配置**。请求参数若能改写它，这条路由就成了任意 URL 代理
+// （浏览器侧的任何脚本都能借宿主的网络身份去打内网）。
+await libraryModule.handleLibrarySearch(
+  new Request('http://127.0.0.1:19387/api/structured-prompt/library'
+    + '?q=x&base=https://evil.example&url=https://evil.example&host=https://evil.example'),
+  { libraryBaseUrl: 'https://self.example' },
+  makeUpstream({ prompts: [] }),
+)
+check('请求参数不能改写上游基础地址（这条路由不是任意 URL 代理）',
+  upstreamCalls.at(-1).url.startsWith('https://self.example/'),
+  String(upstreamCalls.at(-1).url))
+
+// 自托管把实例挂在子路径下时，必须保留子路径 —— 这正是把绝对路径改成相对拼接的原因。
+await libraryModule.handleLibrarySearch(
+  searchRequest('?q=x'), { libraryBaseUrl: 'https://host/sub' }, makeUpstream({ prompts: [] }),
+)
+check('基础地址带子路径时保留它（相对拼接，不是绝对路径）',
+  upstreamCalls.at(-1).url.startsWith('https://host/sub/api/prompts/search'),
+  String(upstreamCalls.at(-1).url))
+
+// 检索端点没有"记录不存在"这种语义：那里的 404 只说明上游没有这个端点（自托管版本或子路径
+// 配错），说成"没有这条提示词"会把人带偏 —— 404 特判只属于取全文那条路。
+const search404 = await libraryModule.handleLibrarySearch(
+  searchRequest('?q=x'), undefined, makeUpstream({}, 404),
+)
+const search404Body = await search404.text()
+check('检索端点的 404 不冒充"记录不存在"',
+  search404.status === 502 && !search404Body.includes('这条提示词'),
+  `${search404.status} ${search404Body}`)
+
+check('Config 拒绝会被改写 origin 的地址与带 query/hash 的写法', (() => {
+  const credentials = validate({ libraryBaseUrl: 'https://host@evil.example' })
+  const withQuery = validate({ libraryBaseUrl: 'https://host/sub?x=1' })
+  const withHash = validate({ libraryBaseUrl: 'https://host/sub#frag' })
+  return 'issues' in credentials && 'issues' in withQuery && 'issues' in withHash
+})())
+
+// 两侧各写一份路径字面量，靠这条交叉断言防止"改一边忘另一边"。
+const clientLibrary = await import(pathToFileURL(resolve(SRC, 'client', 'library.ts')).href)
+check('客户端与宿主的路由路径常量一致',
+  clientLibrary.LIBRARY_SEARCH_PATH === libraryModule.LIBRARY_ROUTE_PATH
+  && clientLibrary.LIBRARY_ITEM_PATH === libraryModule.LIBRARY_ITEM_ROUTE_PATH,
+  `${clientLibrary.LIBRARY_SEARCH_PATH} vs ${libraryModule.LIBRARY_ROUTE_PATH}`)
+
+check('Config 校验 libraryBaseUrl 的形状', (() => {
+  const notString = validate({ libraryBaseUrl: 42 })
+  const noHost = validate({ libraryBaseUrl: 'https://' })
+  const wrongScheme = validate({ libraryBaseUrl: 'ftp://x.example' })
+  return 'issues' in notString && notString.issues[0].message.includes('libraryBaseUrl')
+    && 'issues' in noHost && 'issues' in wrongScheme
+})())
+
+check('Config 收窄 libraryBaseUrl：去空白去尾斜杠，空串算没配', (() => {
+  const ok = validate({ libraryBaseUrl: '  https://self.example/  ' })
+  return !('issues' in ok) && ok.value.libraryBaseUrl === 'https://self.example'
+    && Object.keys(narrowConfig({ libraryBaseUrl: '   ' })).length === 0
+})(), JSON.stringify(validate({ libraryBaseUrl: '  https://self.example/  ' })))
+
+// 注册面：**必须走 `ctx.inject`** —— 加载器的 entry 是并行创建的，在 apply 期读一次
+// `ctx.get('connection')` 很可能读到"还没就绪"，然后永久跳过注册且毫无报错（浏览器那边只
+// 看到共享通道的 404）。这条断言锁的是"等就绪"，不是"读得到"。
+const routeRegistrations = []
+const injectedDeps = []
+/**
+ * 造一个假 host 上下文。
+ * @param connection - `ctx.get('connection')` 的返回值；`undefined` 模拟没有 web 载体。
+ * @param options - 关掉某个能力面，用来覆盖降级路径。
+ * @returns 假上下文。
+ */
+const hostCtx = (connection, options = {}) => {
+  const self = {
+    ...(options.noInject === true ? {} : {
+      inject: (deps, callback) => {
+        injectedDeps.push([...deps])
+        // 真实现的回调收到的是**子作用域**上下文（副作用挂在它上面才会随服务释放），
+        // 假上下文里就把自己传进去。
+        callback(self)
+        return deps
+      },
+    }),
+    ...(options.noEffect === true ? {} : { effect: (factory, label) => { factory(); return label } }),
+    get: name => (name === 'connection' ? connection : undefined),
+  }
+  return self
+}
+const connectionFace = {
+  fetch: {
+    register: (route) => {
+      routeRegistrations.push(route)
+      return async () => {}
+    },
+  },
+}
+libraryModule.registerLibraryRoute(hostCtx(connectionFace), undefined)
+check('注册等 connection 就绪（经 ctx.inject，不是 apply 期读一次）',
+  injectedDeps.length === 1 && injectedDeps[0].join() === 'connection',
+  JSON.stringify(injectedDeps))
+check('有 connection 时注册两条只读路由',
+  routeRegistrations.length === 2
+  && routeRegistrations.every(route => route.methods.join() === 'GET' && route.requestBody === 'buffered')
+  && routeRegistrations.map(route => route.path).join()
+    === [libraryModule.LIBRARY_ROUTE_PATH, libraryModule.LIBRARY_ITEM_ROUTE_PATH].join(),
+  routeRegistrations.map(route => `${route.path} ${route.methods} ${route.requestBody}`).join(' | '))
+check('两条路由都挂在 /api 之下（connection 的精确路由要求）',
+  routeRegistrations.every(route => route.path.startsWith('/api/')))
+
+const beforeDegrade = routeRegistrations.length
+libraryModule.registerLibraryRoute(hostCtx(undefined), undefined)
+libraryModule.registerLibraryRoute(hostCtx(connectionFace, { noInject: true }), undefined)
+libraryModule.registerLibraryRoute(hostCtx(connectionFace, { noEffect: true }), undefined)
+check('没有 connection / 没有 inject 面 / 没有 effect 面时都不注册（工具不受影响）',
+  routeRegistrations.length === beforeDegrade, String(routeRegistrations.length))
+
+const applyRoutes = []
+const applyConnection = {
+  fetch: {
+    register: (route) => {
+      applyRoutes.push(route)
+      return async () => {}
+    },
+  },
+}
+applyModule.apply(
+  {
+    ...hostCtx(applyConnection),
+    tools: { register: tool => { appliedTools.push(tool); return () => {} } },
+  },
+  { provider: 'fork' },
+)
+check('apply 在 connection 就绪时一并注册检索路由（经 ctx.inject）',
+  applyRoutes.length === 2, String(applyRoutes.length))
+
 if (failed > 0) {
   console.error(`\n${failed} 项工具测试未通过。`)
   process.exit(1)

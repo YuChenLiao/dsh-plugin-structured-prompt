@@ -1,9 +1,10 @@
 /**
  * 结构化输入任务的会话状态。
  *
- * 两个槽位注册共用同一个 store 句柄：入口按钮（`conversation.input.left`）切换
- * 开关，表单弹窗（`conversation.input.dock`）按开关渲染。实例由 Slot 渲染器按
- * 「handle × sessionId」缓存，因此两处共享同一实例，不需要跨注册的状态同步。
+ * 两个槽位注册共用同一个 store 句柄：入口按钮（`conversation.input.left`）切换开关，
+ * 弹窗（`conversation.input.dock`）按开关渲染 —— 表单与提示词库检索**互斥**，同时只开一个。
+ * 实例由 Slot 渲染器按「handle × sessionId」缓存，因此几处共享同一实例，不需要跨注册的状态
+ * 同步。
  *
  * 工具名与用途**按索引配对**（`callableTools[i]` ↔ `toolSlots[i]`），所以增删必须
  * 成对操作；`addTool` / `removeTool` 是唯一的成对入口，避免两个数组长度错位。
@@ -12,6 +13,8 @@ import { defineStore } from '@deepseek-ai/dsh-client-store'
 import type { StoreHandle } from '@deepseek-ai/dsh-client-store'
 import type { ListFieldKey, PromptForm, StructuredState } from '../shared/types.js'
 import { completeForm, createEmptyForm } from '../shared/forms.js'
+import { createLibraryState } from '../shared/library.js'
+import type { LibraryState } from '../shared/library.js'
 
 /**
  * 初始会话状态。
@@ -25,15 +28,22 @@ function emptyState(): StructuredState {
     form: createEmptyForm(),
     collapsed: ['rules', 'tools', 'output'],
     appliedTemplate: '',
+    library: createLibraryState(),
   }
 }
 
 /** store 的动作表：`draft` 之外的参数会原样暴露给组件。 */
 export interface StructuredActions {
-  /** 打开表单弹窗。 */
+  /** 打开表单弹窗（与检索弹窗互斥）。 */
   open(draft: StructuredState): void
   /** 关闭表单弹窗（表单内容保留，便于再次进入）。 */
   close(draft: StructuredState): void
+  /** 打开提示词库检索弹窗（与表单弹窗互斥）。 */
+  openLibrary(draft: StructuredState): void
+  /** 关闭检索弹窗（查询词与结果保留，便于再次进入）。 */
+  closeLibrary(draft: StructuredState): void
+  /** 局部更新检索弹窗的状态：请求开始 / 结果 / 失败都经它落下。 */
+  patchLibrary(draft: StructuredState, patch: Partial<LibraryState>): void
   /** 整表替换（模板填充 / JSON 导入）。 */
   setForm(draft: StructuredState, form: Partial<PromptForm>): void
   /** 写入单个字段；值的类型由字段名推导。 */
@@ -63,14 +73,24 @@ export type StructuredInputStore = StoreHandle<StructuredState, StructuredAction
 
 /**
  * 声明结构化输入任务的 store。
- * @returns store 句柄，写集覆盖整表替换、字段写入、数组条目增删改序与分组折叠。
+ * @returns store 句柄，写集覆盖整表替换、字段写入、数组条目增删改序、分组折叠与检索弹窗状态。
  */
 export function createStructuredInputStore(): StructuredInputStore {
   return defineStore<StructuredState, StructuredActions>({
     init: emptyState,
     actions: {
-      open: (draft) => { draft.active = true },
+      open: (draft) => {
+        draft.active = true
+        // 两个弹窗互斥：从入口直接切过来时，另一个不能留在打开状态。
+        draft.library.active = false
+      },
       close: (draft) => { draft.active = false },
+      openLibrary: (draft) => {
+        draft.library.active = true
+        draft.active = false
+      },
+      closeLibrary: (draft) => { draft.library.active = false },
+      patchLibrary: (draft, patch) => { Object.assign(draft.library, patch) },
       setForm: (draft, form) => { draft.form = completeForm(form) },
       setField: (draft, key, value) => { draft.form[key] = value },
       addItem: (draft, key, value) => { draft.form[key].push(value) },

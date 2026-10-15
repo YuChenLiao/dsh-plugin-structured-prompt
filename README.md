@@ -1,8 +1,8 @@
 # dsh-plugin-structured-prompt
 
-把 DSH 输入框切换成**结构化提示词表单**的插件。
+把 DSH 输入框切换成**结构化提示词表单**的插件，并接一个**公开提示词库**的检索入口。
 
-在输入框底部的「结构化输入任务」，点开即弹出结构化提示词表单。填完后可以点「复制」把成稿取走，或点「发送」把它作为普通用户消息直接投递进当前会话 —— 没有「同步回输入框再编辑」这一步。
+在输入框底部的「结构化输入任务」，点开即弹出结构化提示词表单。填完后可以点「复制」把成稿取走，或点「发送」把它作为普通用户消息直接投递进当前会话 —— 没有「同步回输入框再编辑」这一步。旁边的「提示词库」按钮检索 prompts.chat 上的公开提示词，选中后预览原文、直接发送：这条路径**不经过构建器**（检索到的是别人的成品文本，不做字段校验）。
 
 ```powershell
 dsh plugin --profile desktop add github:YuChenLiao/dsh-plugin-structured-prompt
@@ -16,6 +16,8 @@ dsh plugin --profile desktop add github:YuChenLiao/dsh-plugin-structured-prompt
 本插件是**提示词构建器**：DSH 的系统提示由主机每步组装，客户端插件没有「仅对单次对话注入 system prompt」的接口，因此产出的提示词以**普通用户消息**的形式投递进当前会话（或复制到剪贴板由你自行处置）。
 
 同一个构建器还以**工具**的形式暴露给模型（见下节），因此"人来填表单"和"模型自己构建"得到的提示词是同一份实现、同一份产物。
+
+本插件有**两条产出路径**，边界是 v0.3.0 定下的：表单与工具走**构建器**（同一份实现、同一份产物，产物由 `tests/golden/` 的 25 条样本逐字锁住）；提示词库检索走**旁路** —— 检索到的是别人写好的成品文本，不做字段校验、不进构建器，只被预览与发送。两条路径共用同一条发送链路（会话作用域的 `conversation.send`），产物互不干涉。
 
 ## 功能
 
@@ -36,6 +38,8 @@ dsh plugin --profile desktop add github:YuChenLiao/dsh-plugin-structured-prompt
 - **填完即走**：要么点「复制」把成稿拿去别处用，要么点「发送」直接投递进当前会话。没有中间态。
 - **实时预览与预算**：表单底部可展开查看完整提示词；折叠标题给出字数与**估算 token**，展开后列出**逐段占用**（哪一段最吃上下文），便于发送前判断会不会太长。token 是估算（CJK 每字 1、其余每 4 字符 1），只用于判断量级。
 - **模板与导入导出**：内置八套模板 —— 4 套**任务形态**（探索调研、实现改动、故障定位、交接归档）与 4 套**领域样例**（告警研判（原始示例）、代码审查、数据提取、报告撰写）。模板数据是 `src/shared/templates.json`：表单下拉、工具的 `template` 枚举、黄金样本都从它取值，改模板不必碰代码。**下拉选项里带每套模板的一句话场景**；套用后表单顶部出现一条场景条，提醒把本次的具体任务写进「目标」—— 模板带的是形态化目标，不复述具体任务时产物会变泛。场景条是**界面陈述**：它由 store 里的 `appliedTemplate` 驱动，**不参与提示词构建**（成稿只由表单字段决定，改这个标记不会改产物一个字节）。同一会话内手改字段与关闭重开都不会清掉它，只有「清空」与「导入」会清本会话的标记 —— 注意表单状态本就按会话独立（store 实例按会话分开），切到别的会话看到的是那个会话自己的表单，自然也没有这条场景条；记的 id 解析不到时（例如来自已删除的模板）整条不渲染 —— 界面不声称一个说不出来源的来源。表单可导出为 JSON、从 JSON 导入，便于跨会话复用。导出文档带 **schema 版本号**；导入时只接受已知字段并逐字段校验形状 —— 未知键、类型不符、越界枚举会被丢弃并在界面上说明，旧版无版本号的文件仍可读。
+- **提示词库检索（prompts.chat）**：输入框底部第二个入口，「检索 → 预览 → 发送」。**这条路径不经过构建器**：检索到的是别人写好的成品文本，既不做字段校验、也不填进表单，发送的就是那段原文（界面写明「未经本插件整理」，按钮文案是「发送原始提示词」）。检索只按**标题**匹配；选中一条后再单独取全文，所以列表页不会把一屏全文带进来。留空查询则列出上游最新的一批 —— 注意那条路径走的是上游的**列表**端点，它每条都带全文，宿主取回后立即丢弃（只留标题、描述、作者与 id），因此那次响应本身并不小。发送走的是与表单成稿**同一条**链路（会话作用域的 `conversation.send`）。
+- **提示词库的请求由宿主代发**：上游不返回 CORS 头（预检返 204 却不回 `Access-Control-Allow-Origin`），浏览器直连会被拒。所以浏览器请求的是宿主注册的两条**同源**路由 —— `/api/structured-prompt/library`（检索）与 `/api/structured-prompt/library/item`（取全文），由宿主用全局 `fetch` 去取上游。副作用是好的：上游地址成了宿主侧配置（`config.libraryBaseUrl`，缺省 `https://prompts.chat`），要指向自托管实例只改配置、插件代码不动。三条边界由断言守着：基础地址**只来自配置**（不接受请求参数，否则这条路由就是任意 URL 代理）、记录 id 先校验再拼进上游路径（挡路径注入）、不向上游转发任何浏览器请求头。上游失败被归一成可读说明而不是把异常抛给浏览器：超时 → 504，网络错 → 502，上游 404 → 404（「记录没了」，只有取全文那条路会这样判），其余非 2xx → 502。
 - **跟随主题**：颜色与阴影全部走 DSH 主题 token（`--dsw-alias-*`、`--dsw-elevation-prominent`），深浅色主题自动切换。
 
 ## 表单项（17 项）
@@ -253,7 +257,7 @@ node --import file:///D:/dsh/deepseek-harness/node_modules/tsx/dist/loader.mjs `
 单文件不超过 **260 行**、客户端入口不超过 **140 行**（都由 `tests/verify-install.mjs` 断言），入口只做装配：
 
 ```text
-src/index.ts                   host 半边入口：注册模型可调用的工具
+src/index.ts                   host 半边入口：注册模型可调用的工具 + 提示词库的代发路由
 src/host/
   tool.ts                      工具定义（schema + 行为 + 卡片）
   build.ts                     纯构建：已收窄的参数 → 表单 → 提示词
@@ -261,6 +265,8 @@ src/host/
   parameters.ts                参数与输出 schema（标准 JSON Schema）
   subagents.ts                 直投子代理：provider 选择 + 前台 run 的收尾
   config.ts                    装载行配置的收窄与 Config schema（装载期校验）
+  library.ts                   提示词库的同源路由：路径 / 方法 / 失败归一，两条只读 GET
+  library-upstream.ts          上游请求与响应工具（fetch 可注入，便于离线断言）
 src/shared/                    两个半边共用的纯逻辑（无客户端/宿主依赖）
   types.ts                     共享类型（表单、状态、分组元数据）
   forms.ts                     空白表单、片段补全、导出/导入的版本化文档
@@ -269,10 +275,12 @@ src/shared/                    两个半边共用的纯逻辑（无客户端/宿
   tokens.ts                    token 粗略估算（预算提示用）
   templates.ts                 模板库的加载、形状校验与 id 解析（复用导入校验那份 `FIELD_SHAPES`）
   templates.json               模板数据：单一真源，表单下拉 / 工具枚举 / 黄金样本都取自它
+  library.ts                   提示词库的类型、常量与上游响应映射（与表单无耦合）
 src/client/
   index.ts                     客户端入口：槽位注册 + 样式注入（无 UI 实现）
   store.ts                     会话状态（defineStore 动作表）
   send.ts                      把成稿发进会话（会话作用域的 conversation.send）
+  library.ts                   检索客户端（只认识同源路径，不认识上游地址）
   plugin-context.ts            消费到的 Cordis 上下文形态（本地声明，不引入宿主包）
   dsh-client-store.d.ts        DSH store 的本地类型声明（不引入其包）
   ui/
@@ -288,8 +296,10 @@ src/client/
     Preview.tsx                提示词预览
     ModalFooter.tsx            底部操作栏
     Modal.tsx                  弹窗三段结构
-    Panel.tsx                  conversation.input.dock 占用者（按开关渲染弹窗）
-    Trigger.tsx                input.left 占用者（入口按钮）
+    LibraryModal.tsx           提示词库弹窗（外壳 / 原文预览 / 请求副作用）
+    LibraryList.tsx            提示词库的列表视图（搜索行 + 状态行 + 结果列表）
+    Panel.tsx                  conversation.input.dock 占用者（按开关渲染两个弹窗）
+    Trigger.tsx                input.left 占用者（表单与提示词库两个入口按钮）
     sections/                  四个分组各自的字段
       BasicSection.tsx  RulesSection.tsx  ToolsSection.tsx  OutputSection.tsx
 tools/
@@ -331,7 +341,8 @@ window.__ModuleLoader__.load({ id: 'dsh-plugin-structured-prompt', factory: requ
 ```
 
 - `react` 与 `@deepseek-ai/dsh-client-store` 走注入的 `require`（模块表提供），其余依赖内联；
-- `lib/index.js` 是 host 半边：`apply` 收窄装载行配置、注册模型可调用的工具 `build_structured_prompt`（`inject: ['tools']`），不读取任何会话数据；产物**零 import**（见「为什么工具定义是手写的」）。
+- `lib/index.js` 是 host 半边：`apply` 收窄装载行配置、注册模型可调用的工具 `build_structured_prompt`（`inject: ['tools']`）与提示词库的两条同源路由，不读取任何会话数据；产物**零 import**（见「为什么工具定义是手写的」）—— 检索路由用的是全局 `fetch` 与 `Response`，这条新增的网络能力因此没有破坏自包含约束。
+- **提示词库的路由走可选服务**：`ctx.get('connection')`，**不写进 `inject`**。理由与 `delegate` 走 `ctx.get('subagents')` 相同 —— 没有 web 载体的组装里，本插件仍要能提供"构建提示词"的能力；把可选能力写成硬依赖会让整个插件在那些组装里不激活。没有 `connection`（或没有 `effect` 面，无法保证释放）时只跳过路由注册，工具照常可用。
 
 ## 架构
 
@@ -339,20 +350,23 @@ window.__ModuleLoader__.load({ id: 'dsh-plugin-structured-prompt', factory: requ
 
 | 槽位 | 组件 | 职责 |
 | --- | --- | --- |
-| `conversation.input.left`（list） | `ui/Trigger.tsx` | 输入框底部工具栏里的入口按钮 |
-| `conversation.input.dock`（list） | `ui/Panel.tsx` | 打开时渲染表单弹窗，关闭时不占空间 |
+| `conversation.input.left`（list） | `ui/Trigger.tsx` | 输入框底部工具栏里的两个入口按钮（结构化输入任务 / 提示词库） |
+| `conversation.input.dock`（list） | `ui/Panel.tsx` | 打开哪个就渲染哪个弹窗（表单 / 提示词库，两者互斥），都不开时不占空间 |
 
-两处 `store` 座位不可省略（见上文[槽位注册契约](#槽位注册契约注册测试守住的那条线)），否则组件拿不到 `useStore` 会直接崩溃失效。声明后渲染器按「handle × sessionId」共享同一实例，所以入口的 `open()` 会直接驱动弹窗组件重渲染——不需要任何跨注册的状态同步。
+两处 `store` 座位不可省略（见上文[槽位注册契约](#槽位注册契约注册测试守住的那条线)），否则组件拿不到 `useStore` 会直接崩溃失效。声明后渲染器按「handle × sessionId」共享同一实例，所以入口的 `open()` / `openLibrary()` 会直接驱动弹窗组件重渲染——不需要任何跨注册的状态同步。两个开关在 store 里**互斥**：打开一个会关掉另一个。
 
 模块划分见上文[代码结构](#代码结构)；数据流是单向的：
 
 ```text
 store.ts (状态) ──► ui/Panel.tsx ──► ui/Modal.tsx ──► ui/sections/* ──► ui/base.tsx
-                        │                  │
-                        │                  └──► ui/ModalFooter.tsx（模板 / 导入导出 / 复制发送）
+                        │      │           │
+                        │      │           └──► ui/ModalFooter.tsx（模板 / 导入导出 / 复制发送）
+                        │      └──► ui/LibraryModal.tsx ──► client/library.ts ──►（同源路由 → 宿主代发）
                         └──► ui/Trigger.tsx（同一 store 的另一处只读/写）
 format.ts (纯函数) ◄── PromptForm ── ui/OutputSection.tsx（选格式时填骨架）
 ```
+
+提示词库那条支线**不在构建器上**：`shared/library.ts` 与表单类型没有耦合，检索到的原文既不进 `PromptForm`、也不经 `buildSystemPrompt`，因此黄金样本（25 条）与本批改动无关 —— 这正是"检索结果不走规范检测"在代码结构上的落点。
 
 ### 为什么不用另外两个候选挂载点
 
@@ -381,4 +395,5 @@ DSH 里"接管输入框"看起来有两个更直接的位置，但都不能满�
 - **看不到入口**：确认已重启 DSH。浏览器控制台里 `ClientModuleSystem` 的加载失败会指向本插件的 `lib/client.js`。入口只在有当前会话时可用（没有会话时按钮禁用）。
 - **点了按钮没反应**：检查控制台是否有渲染异常；两个组件的判定与渲染都由共享 store 的 `useStore` 驱动，正常路径下点击即弹出表单。
 - **弹窗高于预期**：高度上限是 `70vh`，实际高度由内容决定。展开越多分组越高；超过上限后改为内容区滚动，这属于预期行为。
+- **提示词库检索失败**：界面直接显示宿主的说明（超时 / 上游状态码 / 网络不可达）。上游是公网服务，断网或它本身不可用时就是这样；把 `config.libraryBaseUrl` 指向自托管实例也能解决。浏览器**看不到**上游的错误细节 —— 请求是宿主代发的。
 - **手动模式工具清单为空**：需点「+ 添加一个工具」逐行填写工具名；本插件不读取任何已安装清单（见「为什么不用清单选择」一节）。

@@ -118,10 +118,15 @@ export interface HostPluginContext {
     register(definition: ToolDefinitionLike): unknown
   }
   /**
+   * 注册一个随插件 fiber 释放的副作用；检索路由必须走它（disposer 不执行的话，重复装载会撞 `exact Fetch route ... is already registered`）。
+   * @param factory - 立即执行并返回清理句柄的工厂。
+   * @param label - 诊断标签。
+   */
+  effect?(factory: () => unknown, label: string): unknown
+  /**
    * 可选读取一个服务。
    *
-   * `subagents` 走这条路而不是写进 `inject`：没装配子代理 provider 的组装里，本插件仍要
-   * 能提供"只构建提示词"的能力 —— 把可选能力写成硬依赖会让整个插件在那些组装里不激活。
+   * `subagents` 与 `connection` 走这条路而不是写进 `inject`：缺它们的组装里本插件仍要能提供"只构建提示词"的能力。
    * @param name - 服务名。
    * @returns 服务实例；缺失时为 `undefined`。
    */

@@ -434,6 +434,102 @@ check('17 个字段各自有 DOM 锚点（展开全部分组）', (() => {
     && html.includes('>纯文本</button>')
 })())
 
+// ---- 8) 提示词库弹窗 ----
+//
+// 检索走宿主代发的同源路由，SSR 里不会真发请求；这里用 store 驱动界面状态，覆盖四种渲染：
+// 入口按钮、列表（含失败态）、详情、以及两个弹窗的互斥。网络层的行为由工具套断言。
+instance.actions.close()
+const triggerHtml = (() => {
+  const out = trigger()
+  return out.error === null ? out.html : `render-failed: ${String(out.error)}`
+})()
+check('入口有「提示词库」按钮',
+  !renderFailed(triggerHtml)
+  && triggerHtml.includes('data-structured-prompt-library-trigger')
+  && triggerHtml.includes('提示词库'),
+  triggerHtml.slice(0, 200))
+
+instance.actions.openLibrary()
+const libraryOpen = okHtml()
+check('打开检索弹窗',
+  !renderFailed(libraryOpen) && libraryOpen.includes('data-structured-prompt-library'),
+  libraryOpen.slice(0, 160))
+check('打开检索弹窗时表单弹窗不渲染（两者互斥）',
+  !renderFailed(libraryOpen)
+  && !libraryOpen.includes('data-structured-prompt-modal')
+  && !libraryOpen.includes('结构化输入任务'),
+  libraryOpen.slice(0, 160))
+check('检索弹窗有搜索框与检索按钮',
+  libraryOpen.includes('aria-label="检索提示词"') && libraryOpen.includes('>检索<'))
+check('未检索时给出用法提示', libraryOpen.includes('留空则列出最新的一批'))
+check('底部说明请求由宿主代发', libraryOpen.includes('请求由宿主代发'))
+
+// 假数据用**上游检索端点的真实字段形状**：`/api/prompts/search` 的条目只有
+// id/title/slug/author，没有 description（实测）—— 用带 description 的假数据会掩盖
+// "真实界面里列表只有标题与作者"这个事实。
+instance.actions.patchLibrary({
+  status: 'ready',
+  total: 12,
+  items: [
+    { id: 'a1', title: 'Code Review Expert', description: '', author: 'alice' },
+    { id: 'a2', title: '文章大纲', description: '', author: '' },
+  ],
+})
+const listed = okHtml()
+check('列表渲染标题与作者（上游检索端点不给描述）',
+  !renderFailed(listed) && listed.includes('Code Review Expert') && listed.includes('@alice'),
+  listed.slice(0, 160))
+check('无描述的条目不留下 undefined 字样',
+  !renderFailed(listed) && !listed.includes('undefined'))
+// 容错路径：上游哪天给了 description，界面照样渲染（`mapItem` 保留该字段）。
+instance.actions.patchLibrary({
+  status: 'ready',
+  items: [{ id: 'a1', title: 'T', description: '上游给了描述', author: '' }],
+})
+const described = okHtml()
+check('上游给了描述时也渲染（mapItem 保留该字段）',
+  !renderFailed(described) && described.includes('上游给了描述'), described.slice(0, 160))
+check('列表显示总数与显示条数', listed.includes('共 12 条') && listed.includes('显示前 2 条'))
+check('条目带可定位的锚点', listed.includes('data-library-item="a1"'))
+
+instance.actions.patchLibrary({ status: 'failed', failure: '上游 503', items: [], total: 0 })
+const failedHtml = okHtml()
+check('失败态显示说明',
+  !renderFailed(failedHtml) && failedHtml.includes('上游 503'), failedHtml.slice(0, 160))
+
+instance.actions.patchLibrary({
+  status: 'ready',
+  selectedId: 'a1',
+  detailStatus: 'ready',
+  detail: {
+    id: 'a1', title: 'Code Review Expert', description: '', author: 'alice', content: 'PREVIEW BODY',
+  },
+})
+const libraryDetail = okHtml()
+check('详情视图渲染原文',
+  !renderFailed(libraryDetail)
+  && libraryDetail.includes('data-library-content') && libraryDetail.includes('PREVIEW BODY'),
+  libraryDetail.slice(0, 160))
+check('详情视图说明原文未经整理', libraryDetail.includes('未经本插件整理'))
+check('详情视图提供复制与发送',
+  libraryDetail.includes('>复制<') && libraryDetail.includes('发送原始提示词'))
+check('详情视图可返回列表', libraryDetail.includes('← 返回'))
+// "发送的就是检索到的原文"是这条路径的核心承诺。SSR 点不了按钮，但可以证明**界面显示的
+// 原文与 `detail.content` 逐字一致** —— 发送用的正是同一个字段。
+const shownContent = (/<pre[^>]*data-library-content[^>]*>([\s\S]*?)<\/pre>/.exec(libraryDetail) ?? [])[1] ?? ''
+check('详情视图里的原文与 detail.content 逐字一致',
+  shownContent === 'PREVIEW BODY', shownContent.slice(0, 80))
+// 上游地址是宿主侧配置（可指向自托管实例），界面文案不该写死默认域名。
+check('界面不写死上游域名（可指向自托管实例）',
+  !renderFailed(libraryDetail) && !renderFailed(libraryOpen)
+  && !libraryDetail.includes('prompts.chat') && !libraryOpen.includes('prompts.chat'))
+// 检索到的原文**不进入构建器**：详情视图里不该出现表单产物（两条产出路径互不干涉）。
+check('详情视图不渲染提示词成稿（两条产出路径互不干涉）',
+  !renderFailed(libraryDetail) && !libraryDetail.includes('# 硬性规则'))
+
+instance.actions.closeLibrary()
+check('关闭检索弹窗后不占空间', panel().html === '')
+
 if (failed > 0) {
   console.error(`\n${failed} 项渲染测试未通过。`)
   process.exit(1)

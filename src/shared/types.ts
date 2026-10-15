@@ -4,6 +4,7 @@
  * 全部为纯类型，无运行时导出（因此用 `.ts` 而非 `.d.ts`，可被 `import type` 消费
  * 而不产生运行时代码）。
  */
+import type { LibraryState } from './library.js'
 
 /** 工具调用策略。 */
 export type ToolPolicy = '' | 'auto' | 'manual'
@@ -86,6 +87,13 @@ export interface StructuredState {
    * 渲染测试只能驱动 store，本地状态在 SSR 下不可观测（等于没有守护）。
    */
   appliedTemplate: string
+  /**
+   * 提示词库检索弹窗的状态。
+   *
+   * 与表单并列但**彼此隔离**：检索到的是别人的成品提示词，既不被填进表单、也不进构建器。
+   * 详情见 `./library.ts`。
+   */
+  library: LibraryState
 }
 
 /** 四个分组的元数据。 */
