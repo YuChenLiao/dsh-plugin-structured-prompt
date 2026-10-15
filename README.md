@@ -352,6 +352,7 @@ tests/                                 test-prompt / test-golden / test-document
                                        / test-registration / test-render / verify-install
   golden/                             提示词格式的契约样本（cases.mjs + 每个用例的 .txt）
 docs/changes/                         每个批次的归档（日期 + 主题命名，不绑版本号）：行为变更、契约影响、以及「评估后决定不做」的方案
+docs/releases/                        发布说明（每个 tag 一份，GitHub release 正文的来源）
 ```
 
 `src/shared/` 是**两个组件共用的那部分**（槽位注册描述、发送链路、上下文类型、UI 基元）：结构化组件与提示词库组件各自完整，谁也不 import 谁 —— 检索到的是别人的成品文本，不进构建器，这一点在目录上就是可见的。而每个组件内部的 `shared/` 是**该组件两个半边的交汇点**：客户端表单与模型工具都调用同一份 `buildSystemPrompt`，所以两种入口产出的提示词必然一致（`tests/test-tool.mjs` 会逐字比对）。
