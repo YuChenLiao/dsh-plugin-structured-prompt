@@ -15,7 +15,7 @@ import type { LibraryState } from '../../shared/library.js'
 import type { FormActions } from './actions.js'
 import { SmallButton } from './base.js'
 import { copyText } from './clipboard.js'
-import { fetchLibraryDetail, searchLibrary } from '../library.js'
+import { fetchLibraryDetail, searchLibrary, searchPatch } from '../library.js'
 import { LibraryList } from './LibraryList.js'
 import {
   COLORS,
@@ -86,9 +86,13 @@ export function LibraryModal({
     void searchLibrary(library.query).then((result) => {
       if (seq !== searchSeq.current) return
       if (result.ok) {
-        actions.patchLibrary({ status: 'ready', items: [...result.value.items], total: result.value.total })
+        // 用 `searchPatch` 而不是在这里逐字段挑：跨半边的这一步（响应 → store）因此有断言守着。
+        actions.patchLibrary(searchPatch(result.value))
       } else {
-        actions.patchLibrary({ status: 'failed', failure: result.error, items: [], total: 0 })
+        // 失败时把来源名一并清掉 —— 底部不该继续显示上一次成功时的来源。
+        actions.patchLibrary({
+          status: 'failed', failure: result.error, items: [], total: 0, source: '',
+        })
       }
     })
   }
@@ -213,7 +217,12 @@ export function LibraryModal({
               </div>
             </>
           ) : (
-            <span style={captionStyle}>来源：公共提示词库（请求由宿主代发，浏览器不直连）</span>
+            <span style={captionStyle}>
+              {library.source === ''
+                // 还没检索过、或宿主没带回来源名时的中性说明。
+                ? '来源：公共提示词库（请求由宿主代发，浏览器不直连）'
+                : `来源：${library.source}（社区公开提示词库，请求由宿主代发）`}
+            </span>
           )}
         </div>
       </div>

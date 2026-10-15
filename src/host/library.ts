@@ -141,7 +141,14 @@ export async function handleLibrarySearch(
   }
   const parsed = await jsonBody(outcome.response)
   if (!parsed.ok) return jsonResponse({ error: parsed.message }, 502)
-  return jsonResponse(mapSearchResponse(parsed.body), 200)
+  // 顺带把**数据来源**带给界面：默认是 prompts.chat，自托管时是那个实例的域名。这样来源标注跟着
+  // 配置走，客户端不必写死它，也不必额外开一条"配置下发"通道。
+  const mapped = mapSearchResponse(parsed.body)
+  // 来源名用 host + pathname：自托管把实例挂在子路径下时（`https://host/sub`），只写 host 会让
+  // 同域的两个实例看起来一样。
+  const origin = new URL(base)
+  const path = origin.pathname.replace(/\/+$/, '')
+  return jsonResponse({ ...mapped, source: `${origin.host}${path}` }, 200)
 }
 
 /**

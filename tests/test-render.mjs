@@ -492,6 +492,16 @@ check('上游给了描述时也渲染（mapItem 保留该字段）',
 check('列表显示总数与显示条数', listed.includes('共 12 条') && listed.includes('显示前 2 条'))
 check('条目带可定位的锚点', listed.includes('data-library-item="a1"'))
 
+// 来源标注跟着响应里的 source 走（宿主按配置回填），不是写死在客户端。
+instance.actions.patchLibrary({ status: 'ready', source: 'prompts.chat' })
+const sourced = okHtml()
+check('列表底部标注数据来源（来自响应，不是写死）',
+  !renderFailed(sourced) && sourced.includes('来源：prompts.chat'), sourced.slice(0, 200))
+instance.actions.patchLibrary({ source: 'self.example' })
+const selfSourced = okHtml()
+check('来源名随响应变化（自托管时不显示默认域名）',
+  !renderFailed(selfSourced) && !selfSourced.includes('prompts.chat'), selfSourced.slice(0, 200))
+
 instance.actions.patchLibrary({ status: 'failed', failure: '上游 503', items: [], total: 0 })
 const failedHtml = okHtml()
 check('失败态显示说明',

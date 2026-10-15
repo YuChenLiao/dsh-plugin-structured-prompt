@@ -1194,6 +1194,74 @@ check('客户端与宿主的路由路径常量一致',
   && clientLibrary.LIBRARY_ITEM_PATH === libraryModule.LIBRARY_ITEM_ROUTE_PATH,
   `${clientLibrary.LIBRARY_SEARCH_PATH} vs ${libraryModule.LIBRARY_ROUTE_PATH}`)
 
+// 宿主没注册路由时返回的是**纯文本 404**（共享通道的兜底，不是我们那两条路由的 JSON）；
+// 界面上要给出可执行的说明，而不是"宿主的响应不是 JSON" —— 实测最可能的原因就是
+// host 侧改动还没重启（客户端 bundle 会随页面刷新更新，host 侧注册只在启动时发生）。
+const missingRoute = await clientLibrary.searchLibrary('x', {
+  fetchImpl: () => Promise.resolve(new Response('not found', {
+    status: 404,
+    headers: { 'content-type': 'text/plain; charset=utf-8' },
+  })),
+})
+check('宿主没有这条路由时给出可执行提示（指向重启）',
+  missingRoute.ok === false && missingRoute.error.includes('重启'),
+  missingRoute.ok === false ? missingRoute.error : '(意外成功)')
+
+// 客户端成功路径：宿主回的是**已映射**的形状 `{ items, total, source }`。这条断言覆盖的是一个
+// 真实缺陷 —— 客户端一度用 `mapSearchResponse`（那是给上游 `{ prompts: [...] }` 形状用的）去解析
+// 它，于是 `prompts` 永远不会存在、每次检索都被缩成空列表。渲染测试驱动 store、抓不到这一层。
+const hostShaped = await clientLibrary.searchLibrary('sql', {
+  fetchImpl: () => Promise.resolve(new Response(JSON.stringify({
+    items: [{ id: 'a1', title: 'SQL 优化', description: '', author: 'bob' }],
+    total: 7,
+    source: 'prompts.chat',
+  }), { status: 200, headers: { 'content-type': 'application/json' } })),
+})
+check('客户端能解析宿主回的形状（items / total / source 都不丢）',
+  hostShaped.ok === true
+  && hostShaped.value.items.length === 1
+  && hostShaped.value.items[0].id === 'a1'
+  && hostShaped.value.total === 7
+  && hostShaped.value.source === 'prompts.chat',
+  JSON.stringify(hostShaped))
+
+// 数据来源由宿主带回：默认是上游的 host，自托管时是那个实例的域名 —— 界面文案因此跟着配置走，
+// 不必在客户端写死（这条也是"标注来源"能被机器核对的部分）。
+const withSourceResponse = await libraryModule.handleLibrarySearch(
+  searchRequest('?q=x'), undefined, makeUpstream({ prompts: [] }),
+)
+const withSourceBody = await withSourceResponse.text()
+check('宿主在检索响应里带回数据来源（默认上游的 host）',
+  JSON.parse(withSourceBody).source === 'prompts.chat', withSourceBody)
+
+const selfHostedSourceResponse = await libraryModule.handleLibrarySearch(
+  searchRequest('?q=x'), { libraryBaseUrl: 'https://host/sub' }, makeUpstream({ prompts: [] }),
+)
+const selfHostedSourceBody = await selfHostedSourceResponse.text()
+check('来源名跟着配置走（自托管时用 host + 子路径，同域两个实例也能分开）',
+  JSON.parse(selfHostedSourceBody).source === 'host/sub', selfHostedSourceBody)
+
+// 收敛层与"响应 → store"那一步各有一条断言。后者此前**没有守护**：删掉组件里的 source 写入，
+// 两套测试都全绿 —— 那正是归档里自陈的"跨半边盲区"，所以这里把 patch 也抽成纯函数来断言。
+const shaped = clientLibrary.toSearchResult({
+  items: [{ id: 'a1', title: 'T' }], total: 3, source: 'prompts.chat',
+})
+check('收敛层保留 items / total / source',
+  shaped.ok === true && shaped.value.items.length === 1
+  && shaped.value.total === 3 && shaped.value.source === 'prompts.chat',
+  JSON.stringify(shaped))
+
+const drifted = clientLibrary.toSearchResult({ prompts: [{ id: 'a1' }], total: 3 })
+check('形状漂移（缺 items）时给出说明，而不是静默当成空列表',
+  drifted.ok === false && drifted.error.includes('items'), JSON.stringify(drifted))
+
+const patched = clientLibrary.searchPatch({
+  items: [{ id: 'a1', title: 'T', description: '', author: '' }], total: 2, source: 'self.example',
+})
+check('响应 → store 的 patch 不丢字段（含 source）',
+  patched.status === 'ready' && patched.total === 2 && patched.source === 'self.example'
+  && patched.items.length === 1, JSON.stringify(patched))
+
 check('Config 校验 libraryBaseUrl 的形状', (() => {
   const notString = validate({ libraryBaseUrl: 42 })
   const noHost = validate({ libraryBaseUrl: 'https://' })

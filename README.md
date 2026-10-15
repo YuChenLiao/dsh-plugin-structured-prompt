@@ -140,6 +140,26 @@ host 半边注册一个工具 `build_structured_prompt`，让模型自己把模�
 
 `tests/verify-install.mjs` 断言 host 产物不含静态 `import`、动态 `import(` 与 `require(`，防止这个约束被无意打破。
 
+## 来源与致谢
+
+插件本身与它检索的提示词库是两回事，这里把关系与许可写清楚（依据是上游仓库的 `LICENSE` 文件，核对于 2026-10）：
+
+| 对象 | 是什么 | 许可 |
+| --- | --- | --- |
+| 本插件 | DSH 的结构化提示词构建器 + 提示词库检索入口 | MIT（本仓库） |
+| [prompts.chat](https://prompts.chat)（[仓库](https://github.com/f/prompts.chat)，原 *Awesome ChatGPT Prompts*） | 本插件检索的社区提示词库，社区维护、可自托管 | **双许可**：源码与站点自产内容 MIT；**提示词内容与数据 CC0 1.0**（公有领域） |
+
+本插件**只调用它的公开只读 HTTP 接口**（`GET /api/prompts/search`、`GET /api/prompts`、`GET /api/prompts/{id}`），
+不包含、不打包、也不分发它的任何代码或提示词数据 —— 所以上游的 MIT 条款对本插件没有附加要求，检索到的
+提示词内容属 CC0（可自由使用，无归属义务）。即便如此，这仍然该写下来并致谢：
+
+- 感谢 [f/prompts.chat](https://github.com/f/prompts.chat) 的作者与社区贡献者：把这个提示词库做成公开、
+  免费、可自托管，还提供一套不需要 API key 的只读接口 —— 没有这些，这个入口无从谈起。
+- 界面上的来源标注跟着响应走（默认 `prompts.chat`，自托管时是你的实例域名），而**检索结果不经本插件
+  的任何规范化处理**直接预览与发送：原文的著作权与许可仍归各自的贡献者。
+- 默认地址 `https://prompts.chat` 是第三方服务；要换成自托管实例，写装载行的
+  `config.libraryBaseUrl` 即可（见下文）。
+
 ## 安装
 
 ### 从 GitHub 安装（推荐）

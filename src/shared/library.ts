@@ -38,6 +38,13 @@ export interface LibrarySearchResult {
   readonly items: readonly LibraryItem[]
   /** 上游报告的总数；取不到时为 `0`（界面据此决定要不要显示"共 N 条"）。 */
   readonly total: number
+  /**
+   * 数据来源的展示名（通常是域名）。
+   *
+   * 由宿主在响应里注入：默认 `prompts.chat`，自托管时是那个实例的域名。界面据此标注来源 ——
+   * 这条文案因此**跟着配置走**，而不是写死在客户端。
+   */
+  readonly source: string
 }
 
 /** 上游基础地址的默认值；装载行的 `config.libraryBaseUrl` 可覆盖它（自托管）。 */
@@ -150,14 +157,16 @@ export function mapDetail(raw: unknown): LibraryDetail | undefined {
  * @returns 检索结果；形状完全不符时给出空结果。
  */
 export function mapSearchResponse(raw: unknown): LibrarySearchResult {
-  if (typeof raw !== 'object' || raw === null) return { items: [], total: 0 }
+  if (typeof raw !== 'object' || raw === null) return { items: [], total: 0, source: '' }
   const record = raw as Record<string, unknown>
   const list = Array.isArray(record['prompts']) ? record['prompts'] : []
   const items = list.map(mapItem).filter((item): item is LibraryItem => item !== undefined)
   const total = typeof record['total'] === 'number' && Number.isFinite(record['total'])
     ? record['total']
     : 0
-  return { items, total }
+  // `source` 由宿主在响应里注入（默认 `prompts.chat`，自托管时是那个实例的域名）；直接映射上游
+  // 自己的响应时它不存在，于是是空串。
+  return { items, total, source: text(record['source']) }
 }
 
 /** 检索弹窗里一次请求的状态。 */
@@ -189,6 +198,8 @@ export interface LibraryState {
   detail: LibraryDetail | null
   /** 详情请求的状态。 */
   detailStatus: LibraryStatus
+  /** 数据来源的展示名（宿主在响应里带回，如 `prompts.chat`）；未知时为空串。 */
+  source: string
 }
 
 /**
@@ -208,5 +219,6 @@ export function createLibraryState(): LibraryState {
     selectedId: '',
     detail: null,
     detailStatus: 'idle',
+    source: '',
   }
 }
