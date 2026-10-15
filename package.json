@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-structured-prompt",
-  "version": "0.4.0",
+  "version": "0.3.1",
   "private": true,
   "description": "DSH 结构化提示词插件（两个可独立装载的组件）：结构化提示词表单 + 模型可调用的构建工具（可选用模板起步、可选直投子代理），以及提示词库检索（prompts.chat，宿主代发、检索结果不经过构建器）。模板库数据在 src/components/structured/shared/templates.json",
   "type": "module",
