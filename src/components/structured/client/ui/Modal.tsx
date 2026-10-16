@@ -168,6 +168,9 @@ export function StructuredPromptModal({
     <div
       ref={maskRef}
       data-dsh-prompt-mask=""
+      // 自证锚点：`column` = 定位已按那一列生效；`viewport` = 退回整视口居中。
+      // 真实布局离线测不了，出问题时用它一眼区分"没生效"与"生效了但期望不同"。
+      data-dsh-prompt-frame={Object.keys(dialogFrame).length === 0 ? 'viewport' : 'column'}
       className={s.mask}
       style={dialogFrame}
       role="presentation"

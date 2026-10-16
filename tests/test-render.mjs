@@ -660,11 +660,15 @@ check('组件用到的类名都在 panel.module.css 里存在（挡住类名 typ
   classTokens.length > 0 && missingClasses.length === 0,
   `共 ${classTokens.length} 个类，缺失：${missingClasses.join(', ') || '(无)'}`)
 
-// 2) 定位基准取自挂载点所在的列，而不是视口。静态读源码：真实布局测不了，但"基准是哪个元素"
+// 2) 定位基准是「比视口窄的那一列」，而不是视口。静态读源码：真实布局测不了，但"基准的判据"
 //    这一行可以被守住（把它换成 documentElement 就是退回那个 bug，实测零红）。
+//    第一版修复只取了一层 `parentElement`，而槽位包装层可能仍是整宽容器 —— 那样测出来等于
+//    视口宽、弹窗照旧居中，界面上毫无变化。所以这里同时守住"会向上找"。
 const frameSource = readFileSync(resolve(SHARED, 'ui', 'use-dialog-frame.ts'), 'utf8')
-check('定位基准取自挂载点所在的列（不是视口）',
-  /parentElement/.test(frameSource) && !/documentElement/.test(frameSource))
+check('定位基准是「比视口窄的那一列」（不是视口本身，也不是整宽的包装层）',
+  /clientWidth < viewport/.test(frameSource) && !/documentElement/.test(frameSource))
+check('基准会向上找（槽位包装层数随版本变，只看一层会静默失效）',
+  /node = node\.parentElement/.test(frameSource))
 check('列尺寸无效时不写定位（避免把遮罩压成不可见）',
   /width > 0/.test(frameSource) && /height > 0/.test(frameSource))
 check('rect → 遮罩样式的映射正确（纯函数，可离线断言）', (() => {
