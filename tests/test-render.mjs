@@ -12,6 +12,7 @@
  *
  * 用法：node --import tsx --import ./tools/lib/loader-hook.mjs tests/test-render.mjs
  */
+import { readFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -40,9 +41,25 @@ const { LibraryPanel } = await import(
 const { LibraryTrigger } = await import(
   pathToFileURL(resolve(LIBRARY, 'client', 'ui', 'Trigger.tsx')).href
 )
-const { sectionStyle, modalBodyStyle, PANEL_CSS } = await import(
-  pathToFileURL(resolve(SHARED, 'ui', 'styles.ts')).href
+// 样式住在真正的 CSS 文件里（构建期编译 + 注入），所以测试直接读源码文本断言：
+//   `panel.css`        —— 全局注入那份（伪类、滚动条、锚在共享属性上的后代选择器）
+//   `panel.module.css` —— CSS Modules 那份（组件引用的类）
+const panelCssText = readFileSync(resolve(SHARED, 'ui', 'panel.css'), 'utf8')
+const moduleCssText = readFileSync(resolve(SHARED, 'ui', 'panel.module.css'), 'utf8')
+// 「rect → 遮罩样式」的纯函数：真实布局测不了，但这条映射可以离线断言。
+const { frameFromRect } = await import(
+  pathToFileURL(resolve(SHARED, 'ui', 'use-dialog-frame.ts')).href
 )
+
+/**
+ * 取出某个类的声明块（只取那一条规则，不含伪类变体）。
+ * @param name - 类名。
+ * @returns 压平空白后的声明文本。
+ */
+const ruleOf = (name) => {
+  const match = new RegExp(`\\.${name}\\s*\\{([^}]*)\\}`).exec(moduleCssText)
+  return (match?.[1] ?? '').replace(/\s+/g, ' ').trim()
+}
 const { TEMPLATES } = await import(
   pathToFileURL(resolve(STRUCTURED, 'shared', 'templates.ts')).href
 )
@@ -129,18 +146,16 @@ instance.actions.open()
 const modal = panel()
 check('打开时弹窗可渲染', modal.error === null, modal.error === null ? '' : String(modal.error))
 check('弹窗以 dialog 呈现', modal.html.includes('role="dialog"') && modal.html.includes('aria-modal="true"'))
-check('弹窗宽度固定（clamp）', modal.html.includes('width:clamp('))
-check('弹窗最多占 70%（不占满窗口）', modal.html.includes('max-height:70vh'))
-
-// 只检查弹窗根元素自身的样式：内部按钮有固定 height 是正常的。
-const modalRootStyle = (/data-structured-prompt-modal=""[^>]*style="([^"]*)"/.exec(modal.html) ?? [])[1] ?? ''
-check('弹窗根元素没有固定高度（由内容决定）', !/(?:^|[;"\s])height:/.test(modalRootStyle), modalRootStyle)
-// `max-width:100%` 是宽度约束（合理）；这里只关心高度不取视口高。
-check('弹窗高度上限不是视口高（不会占满））',
-  !/(?:max-|min-)?height:[^;"]*100vh/.test(modalRootStyle), modalRootStyle)
+// 尺寸约束现在住在 CSS 里（组件只引用类名），所以读样式文本断言。
+const modalRule = ruleOf('modal')
+check('弹窗宽度固定（clamp）', /width:\s*clamp\(/.test(modalRule), modalRule)
+check('弹窗最多占 70%（不占满窗口）', /max-height:\s*70vh/.test(modalRule), modalRule)
+check('弹窗高度上限不是视口高（不会占满）', !/height:\s*[^;]*100vh/.test(modalRule), modalRule)
+check('弹窗根不再写内联样式（尺寸由类名承担）',
+  !/data-structured-prompt-modal=""[^>]*style=/.test(modal.html))
 
 // 回归防线：点遮罩不应关闭弹窗（误触会丢失已填内容）。遮罩上不能有点击处理器。
-const maskTag = (/<div[^>]*style="[^"]*position:fixed[^"]*"[^>]*>/.exec(modal.html) ?? [])[0] ?? ''
+const maskTag = (/<div[^>]*data-dsh-prompt-mask[^>]*>/.exec(modal.html) ?? [])[0] ?? ''
 check('遮罩是弹窗的第一层容器', maskTag !== '', maskTag.slice(0, 120))
 check('遮罩没有绑定点击关闭', maskTag !== '' && !/onclick/i.test(maskTag), maskTag.slice(0, 200))
 
@@ -165,41 +180,53 @@ instance.actions.toggleSection('tools')
 // ---- 4) 文本域自适应高度 + 布局不变量 ----
 
 check('文本域不写死 rows', !/\brows="/.test(toolsOpen.html) && !/\brows="/.test(modal.html))
+// 高度上下限现在住在 CSS（`.textarea`），JS 兜底也从 computed style 读同一个值 ——
+// 断言因此读样式文本，顺带守住"这个约束只有一份"。
+const textareaRule = ruleOf('textarea')
 check('文本域带自适应高度约束（min/max-height）',
-  modal.html.includes('min-height') && modal.html.includes('max-height'))
+  /min-height:\s*\d+px/.test(textareaRule) && /max-height:\s*\d+px/.test(textareaRule), textareaRule)
 
 // 分组曾被卡片包裹，overflow:hidden 把"背景与上下文""语言与语气"等字段裁掉，导致
 // 内容看起来被隐藏、也轮不到滚动条。分组必须不裁剪、不限高、不用卡片。
-check('分组容器不裁剪内容（无 overflow:hidden）',
-  sectionStyle.overflow === undefined && sectionStyle.overflowY === undefined,
-  JSON.stringify(sectionStyle))
-check('分组容器不限制高度（无 maxHeight/height）',
-  sectionStyle.maxHeight === undefined && sectionStyle.height === undefined)
+const sectionRule = ruleOf('section')
+check('分组容器不裁剪内容（无 overflow）',
+  !/overflow\s*:/.test(sectionRule), sectionRule)
+check('分组容器不限制高度（无 height / max-height）',
+  !/(^|[^-])height\s*:|max-height\s*:/.test(sectionRule), sectionRule)
 check('分组不用卡片包裹（无边框与圆角）',
-  sectionStyle.border === undefined && sectionStyle.borderRadius === undefined)
+  !/(border|border-radius)\s*:/.test(sectionRule), sectionRule)
 // 分组上写 `min-height: 0` 会把分组压到内容高度以下，子元素互相压叠
 // （症状是分组标题与上一个字段的输入框重叠）。该属性只属于滚动容器。
-check('分组容器不被压缩（不写 minHeight:0）', sectionStyle.minHeight === undefined,
-  `minHeight = ${String(sectionStyle.minHeight)}`)
+check('分组容器不被压缩（无 min-height）',
+  !/min-height\s*:/.test(sectionRule), sectionRule)
 
-// 滚动条挂在弹窗内容区，且它必须能在弹窗内收缩（flex + minHeight:0），否则溢出
+// 滚动条挂在弹窗内容区，且它必须能在弹窗内收缩（flex + min-height:0），否则溢出
 // 内容会被弹窗的 overflow:hidden 裁掉。
-check('弹窗内容区是滚动容器（overflow-y:auto）', modalBodyStyle.overflowY === 'auto')
-check('弹窗内容区宽度方向不滚动（避免横向滚动条）', modalBodyStyle.overflowX === 'hidden')
-check('弹窗内容区可在弹窗内收缩（flex + minHeight:0）',
-  modalBodyStyle.flex === '1 1 auto' && modalBodyStyle.minHeight === 0)
-check('弹窗内容区预留滚动条槽位（内容增减不跳动）',
-  modalBodyStyle.scrollbarGutter === 'stable')
+const bodyRule = ruleOf('modalBody')
+check('弹窗内容区是滚动容器（overflow-y: auto）', /overflow-y:\s*auto/.test(bodyRule), bodyRule)
+check('弹窗内容区宽度方向不滚动（overflow-x: hidden）', /overflow-x:\s*hidden/.test(bodyRule), bodyRule)
+check('弹窗内容区可在弹窗内收缩（flex + min-height）',
+  /flex:\s*1 1 auto/.test(bodyRule) && /min-height:\s*0/.test(bodyRule), bodyRule)
+check('弹窗内容区预留滚动条槽位（scrollbar-gutter）',
+  /scrollbar-gutter:\s*stable/.test(bodyRule), bodyRule)
 check('滚动容器挂到了弹窗内容区', modal.html.includes('data-scroll=""'))
 
-// 注入样式（PANEL_CSS）的**选择器语义**。组件拆分那批的阻断正是出在这里：把「后代选择器」写成了逗号
-// 分隔的列表后，裸的 `[data-…-modal]` 会**无条件命中弹窗根元素**，于是弹窗拿到了滚动条的
+// 遮罩的定位基准：CSS 里只给 `inset: 0`（整视口）作**回退**，真正的位置由 `useDialogFrame`
+// 按弹窗所在的列算出来（右侧栏打开时对话列会变窄，按视口居中会偏右、被右栏压住）。
+const maskRule = ruleOf('mask')
+check('遮罩以 fixed + inset 作回退（测不到列时退回整视口居中）',
+  /position:\s*fixed/.test(maskRule) && /inset:\s*0/.test(maskRule), maskRule)
+check('按列居中由共享实现承担（两个弹窗同一处）',
+  readFileSync(resolve(SHARED, 'ui', 'use-dialog-frame.ts'), 'utf8').includes('getBoundingClientRect'))
+
+// 注入样式（`shared/ui/panel.css`）的**选择器语义**。组件拆分那批的阻断正是出在这里：把「后代选择器」
+// 写成逗号分隔的列表后，裸的 `[data-…-modal]` 会**无条件命中弹窗根元素**，于是弹窗拿到了滚动条的
 // `width/height` 与禁用按钮的 `opacity` —— 真实浏览器里塌成 10px 高、半透明，而八套测试全绿。
 // 规则：只由共享属性组成的项，不许出现在多项选择器列表里。
 // 先**剥掉注释**再按块切分。这一点本身就是个教训：原先用 `.filter(text => !text.includes('*'))`
 // 排除注释，而第一轮那条错法（裸属性混进滚动条那段）恰好写在注释之后 —— 整段被丢掉，于是这条断言
 // 对真正的回归**零红**（复审用副本突变实测发现）。剥注释是唯一正确的过滤方式。
-const cssGroups = PANEL_CSS
+const cssGroups = panelCssText
   .replace(/\/\*[\s\S]*?\*\//g, '')
   .split('}')
   .map(chunk => (chunk.split('{')[0] ?? '').trim())
@@ -208,9 +235,9 @@ const bareSharedSelectors = cssGroups.filter((group) => {
   const items = group.split(',').map(item => item.trim()).filter(item => item !== '')
   return items.length > 1 && items.some(item => /^\[data-dsh-prompt-(panel|trigger)\]$/.test(item))
 })
-check('PANEL_CSS 不把裸共享属性混进选择器列表（否则无条件命中元素自身）',
+check('panel.css 不把裸共享属性混进选择器列表（否则无条件命中元素自身）',
   bareSharedSelectors.length === 0, bareSharedSelectors.join(' || '))
-check('PANEL_CSS 的选择器都锚在共享属性上（将来加组件不必改样式）',
+check('panel.css 的选择器都锚在共享属性上（将来加组件不必改样式）',
   cssGroups.length > 0 && cssGroups.every(group => group.includes('[data-dsh-prompt-')),
   cssGroups.filter(group => !group.includes('[data-dsh-prompt-')).join(' || '))
 check('表单弹窗根带共享属性 data-dsh-prompt-panel（样式才覆盖得到）',
@@ -367,9 +394,11 @@ const missingScenes = TEMPLATES
 check('下拉选项带出每套模板的一句话场景', missingScenes.length === 0, missingScenes.join(', '))
 // 选项文本变长后这条工具的宽度只能靠 `maxWidth` 兜住，否则最长的选项会把导入/导出/清空挤到
 // 下一行。正则锚定在 select 元素**内部**：别处出现同样的数值不该让这条通过。
+// 宽度约束现在住在 CSS（`.templateSelect`），所以读样式文本 —— 断言的是"这条规则存在"，
+// 而不是某处恰好出现了同样的数值。
+const selectRule = ruleOf('templateSelect')
 check('下拉有宽度约束（选项变长不会把底部按钮挤下去）',
-  /<select[^>]*style="[^"]*max-width:260px/.test(optionsHtml),
-  (/<select[^>]*>/.exec(optionsHtml) ?? [''])[0].slice(0, 160))
+  /max-width:\s*260px/.test(selectRule), selectRule)
 
 instance.actions.setAppliedTemplate('code-review')
 const appliedHtml = okHtml()
@@ -609,6 +638,42 @@ check('详情视图不渲染提示词成稿（两条产出路径互不干涉）'
 
 libraryInstance.actions.close()
 check('关闭检索弹窗后不占空间', panel().html === '')
+
+// ---- 9) 类名与定位基准 ----
+//
+// 这一节守的是本批（样式迁进 CSS Modules）最容易静默出错的两处，两处都先经副本突变证明过
+// "没有它们时测试不说话"：
+//   1. 类名 typo —— 离线 CSS 桩对任意 key 都返回 `css-<key>`，所以 `s.modalTypo` 也能渲染出
+//      class，看起来完全正常；
+//   2. 定位基准被改回视口 —— 那正是使用者反馈的那个 bug，而真实布局离线测不了。
+
+// 1) 组件用到的每个类名都必须真的在样式文件里存在。
+const allHtml = `${modal.html}${toolsOpen.html}${libraryOpen}${libraryDetail}`
+const classTokens = [...new Set(
+  [...allHtml.matchAll(/class="([^"]*)"/g)]
+    .flatMap(match => (match[1] ?? '').split(/\s+/))
+    .filter(token => token.startsWith('css-'))
+    .map(token => token.slice('css-'.length)),
+)]
+const missingClasses = classTokens.filter(name => !new RegExp(`\\.${name}\\s*[,{]`).test(moduleCssText))
+check('组件用到的类名都在 panel.module.css 里存在（挡住类名 typo）',
+  classTokens.length > 0 && missingClasses.length === 0,
+  `共 ${classTokens.length} 个类，缺失：${missingClasses.join(', ') || '(无)'}`)
+
+// 2) 定位基准取自挂载点所在的列，而不是视口。静态读源码：真实布局测不了，但"基准是哪个元素"
+//    这一行可以被守住（把它换成 documentElement 就是退回那个 bug，实测零红）。
+const frameSource = readFileSync(resolve(SHARED, 'ui', 'use-dialog-frame.ts'), 'utf8')
+check('定位基准取自挂载点所在的列（不是视口）',
+  /parentElement/.test(frameSource) && !/documentElement/.test(frameSource))
+check('列尺寸无效时不写定位（避免把遮罩压成不可见）',
+  /width > 0/.test(frameSource) && /height > 0/.test(frameSource))
+check('rect → 遮罩样式的映射正确（纯函数，可离线断言）', (() => {
+  const frame = frameFromRect({ left: 120, width: 800, height: 600 })
+  return frame.left === 120 && frame.width === 800 && frame.right === 'auto' && frame.top === undefined
+})())
+check('列尺寸为 0 时退回 CSS 的 inset: 0（不写定位）',
+  Object.keys(frameFromRect({ left: 0, width: 0, height: 0 })).length === 0,
+  JSON.stringify(frameFromRect({ left: 0, width: 0, height: 0 })))
 
 if (failed > 0) {
   console.error(`\n${failed} 项渲染测试未通过。`)

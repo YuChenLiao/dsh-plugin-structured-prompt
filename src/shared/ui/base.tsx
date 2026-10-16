@@ -3,18 +3,12 @@
  *
  * 这些控件不知道表单字段的语义 —— 它们只接收值、变更回调与无障碍名，字段映射
  * 由 `sections/` 下的分组组件负责。
+ *
+ * 样式在 CSS Modules 里（`shared/ui/panel.module.css`，构建期 hash 化 + 自动注入），
+ * 组件只为**动态值**保留内联 style（例如内容自适应高度）。
  */
 import type { CSSProperties, ReactNode } from 'react'
-import {
-  COLORS,
-  TEXTAREA_MAX_PX,
-  TEXTAREA_MIN_PX,
-  buttonStyle,
-  inputStyle,
-  labelStyle,
-  rowStyle,
-  requiredMarkStyle,
-} from './styles.js'
+import s from './panel.module.css'
 
 /**
  * 浏览器是否支持 `field-sizing: content`（文本域按内容自适应高度）。
@@ -32,13 +26,18 @@ function supportsContentSizing(): boolean {
 let contentSizing: boolean | undefined
 
 /**
- * JS 兜底：把文本域高度贴合内容（上限由 {@link TEXTAREA_MAX_PX} 约束）。
+ * JS 兜底：把文本域高度贴合内容。
+ *
+ * 上限**从 computed style 读**（`.textarea` 的 `max-height`），而不是在 JS 里再存一份 —— 否则
+ * 同一个约束会有两个真源，改了一边就悄悄分叉。
  * @param element - 文本域元素。
  */
 function fitTextArea(element: HTMLTextAreaElement | null): void {
   if (element === null || contentSizing === true) return
   element.style.height = 'auto'
-  element.style.height = `${Math.min(element.scrollHeight, TEXTAREA_MAX_PX)}px`
+  const limit = Number.parseFloat(getComputedStyle(element).maxHeight)
+  const target = Number.isFinite(limit) ? Math.min(element.scrollHeight, limit) : element.scrollHeight
+  element.style.height = `${target}px`
 }
 
 /** 多行文本域的 props。 */
@@ -60,19 +59,15 @@ export interface TextAreaProps {
  */
 export function TextArea({ value, onChange, placeholder, ariaLabel }: TextAreaProps): ReactNode {
   contentSizing ??= supportsContentSizing()
-  const style: CSSProperties = {
-    ...inputStyle,
-    minHeight: TEXTAREA_MIN_PX,
-    maxHeight: TEXTAREA_MAX_PX,
-    // 支持的浏览器走 CSS 自适应；不支持的由首挂载与 onChange 时的 JS 兜底。
-    ...(contentSizing ? { fieldSizing: 'content' } : {}),
-  }
+  // 只有这里必须内联：`field-sizing` 是运行时能力探测的结果，浏览器不支持时根本不设。
+  const dynamic: CSSProperties = contentSizing ? { fieldSizing: 'content' } : {}
   return (
     <textarea
       value={value}
       placeholder={placeholder}
       aria-label={ariaLabel}
-      style={style}
+      className={`${s.input} ${s.textarea}`}
+      style={contentSizing ? dynamic : undefined}
       ref={(element) => { if (!contentSizing) fitTextArea(element) }}
       onChange={(event) => {
         if (!contentSizing) fitTextArea(event.currentTarget)
@@ -106,7 +101,7 @@ export function TextInput({ value, onChange, placeholder, ariaLabel }: TextInput
       value={value}
       placeholder={placeholder}
       aria-label={ariaLabel}
-      style={{ ...inputStyle, resize: undefined }}
+      className={`${s.input} ${s.textInput}`}
       onChange={event => onChange(event.target.value)}
     />
   )
@@ -130,9 +125,9 @@ export interface FieldProps {
 export function Field({ label, required, children }: FieldProps): ReactNode {
   return (
     <div>
-      <label style={labelStyle}>
+      <label className={s.label}>
         {label}
-        {required === true ? <span style={requiredMarkStyle}>*</span> : null}
+        {required === true ? <span className={s.requiredMark}>*</span> : null}
       </label>
       {children}
     </div>
@@ -151,22 +146,30 @@ export interface SmallButtonProps {
   ariaLabel?: string
   /** 是否禁用。 */
   disabled?: boolean
-  /** 额外样式。 */
-  style?: CSSProperties
+  /** 额外的类名（与 `.button` 叠加，用于紧凑按钮之类的变体）。 */
+  className?: string | undefined
+  /**
+   * 额外的**动态**样式。
+   *
+   * 静态样式请走 `className` —— 这个入口只留给"值只能在运行时算出来"的少数场景
+   * （例如按状态算出的对齐方式），否则样式又会散回 ts 里。
+   */
+  style?: CSSProperties | undefined
 }
 
 /**
  * 次要按钮：统一 `type="button"` 与禁用态，避免各处重复写。
- * @param props - 回调、提示与文字。
+ * @param props - 回调、提示、文字、可选类名与动态样式。
  * @returns 按钮元素。
  */
 export function SmallButton({
-  onClick, title, children, ariaLabel, disabled, style,
+  onClick, title, children, ariaLabel, disabled, className, style,
 }: SmallButtonProps): ReactNode {
   return (
     <button
       type="button"
-      style={{ ...buttonStyle, ...style }}
+      className={className === undefined ? s.button : `${s.button} ${className}`}
+      style={style}
       title={title}
       aria-label={ariaLabel ?? title}
       disabled={disabled}
@@ -194,24 +197,12 @@ export interface ChipGroupProps {
  */
 export function ChipGroup({ options, value, onPick }: ChipGroupProps): ReactNode {
   return (
-    <div style={{ ...rowStyle, flexWrap: 'wrap' }}>
+    <div className={s.chipRow}>
       {options.map(([optionValue, text]) => (
         <button
           key={optionValue === '' ? 'none' : optionValue}
           type="button"
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 4,
-            padding: '4px 10px',
-            border: `1px solid ${value === optionValue ? COLORS.accent : COLORS.border}`,
-            borderRadius: 999,
-            background: value === optionValue ? COLORS.accentSoft : 'transparent',
-            color: 'inherit',
-            font: 'inherit',
-            fontSize: 12,
-            cursor: 'pointer',
-          }}
+          className={value === optionValue ? `${s.chip} ${s.chipActive}` : s.chip}
           aria-pressed={value === optionValue}
           onClick={() => onPick(optionValue)}
         >

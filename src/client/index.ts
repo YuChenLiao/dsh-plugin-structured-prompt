@@ -25,7 +25,9 @@ import type { ClientPluginContext } from '../shared/plugin-context.js'
 import { sendPrompt } from '../shared/send.js'
 import type { SendPrompt } from '../shared/send.js'
 import type { SlotEntry } from '../shared/slots.js'
-import { PANEL_CSS } from '../shared/ui/styles.js'
+// 样式写在真正的 CSS 文件里，由构建期编译并在 bundle 执行时自动注入（`tools/lib/build.mjs` 的
+// CSS 插件，与 DSH 官方包同一套做法）—— 所以这里不再手写注入 effect，插件入口只剩装配职责。
+import '../shared/ui/panel.css'
 
 /**
  * 插件依赖：只需要槽位注册。
@@ -44,34 +46,11 @@ export function slotEntries(send: SendPrompt): SlotEntry[] {
   return [...structuredSlotEntries(send), ...librarySlotEntries(send)]
 }
 
-/** 注入的样式标签选择器，避免重复加载时叠加。 */
-const STYLE_SELECTOR = 'style[data-plugin-css="dsh-plugin-structured-prompt"]'
-
-/**
- * 注入一次插件样式（内联样式覆盖不到的伪类与滚动条）。
- * @param ctx - 插件上下文。
- */
-function installStyles(ctx: ClientPluginContext): void {
-  ctx.effect(() => {
-    if (document.querySelector(STYLE_SELECTOR) === null) {
-      const tag = document.createElement('style')
-      tag.dataset['plugin'] = 'dsh-plugin-structured-prompt'
-      tag.dataset['pluginCss'] = 'dsh-plugin-structured-prompt'
-      tag.textContent = PANEL_CSS
-      document.head.appendChild(tag)
-    }
-    return () => {
-      document.querySelector(STYLE_SELECTOR)?.remove()
-    }
-  }, 'structured-prompt: styles')
-}
-
 /**
  * 客户端插件主体。
  * @param ctx - Web Client 根上下文。
  */
 export function apply(ctx: ClientPluginContext): void {
-  installStyles(ctx)
   const send: SendPrompt = (sessionId, prompt) => { sendPrompt(ctx, sessionId, prompt) }
   for (const entry of slotEntries(send)) {
     ctx.slots.inject(entry.name, () => ctx.slots.register(entry.options, entry.component))

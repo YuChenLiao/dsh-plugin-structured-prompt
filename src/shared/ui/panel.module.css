@@ -1,0 +1,442 @@
+/*
+ * 插件界面共用的样式（CSS Modules）。
+ *
+ * 由构建期编译（`tools/lib/build.mjs` 的 CSS 插件）：类名 hash 化（`[hash]_[local]`）+ 自动注入，
+ * 与 DSH 官方客户端包同一套做法。因此这里不需要任何手写注入逻辑，也不会污染全局类名。
+ *
+ * 三条**布局不变量**在这里落地，并由离线渲染测试直接读本文件断言（每条对应一次真实 UI 事故）：
+ *  1. `.section` 不裁剪：分组曾用卡片包裹，`overflow: hidden` 把需要更多高度的字段裁掉；
+ *  2. `.section` 不压缩：分组上写 `min-height: 0` 会把它压到内容高度以下，子元素互相压叠；
+ *  3. `.modalBody` 是唯一滚动容器：`flex: 1 1 auto` + `min-height: 0` 才能在弹窗内收缩，
+ *     溢出的内容出右侧滚动条，而不是被弹窗的 `overflow: hidden` 裁掉。
+ *
+ * 颜色一律用宿主的 CSS 变量（`--dsw-*`，带回退值），不在此处固化主题。
+ */
+
+/* ---- 输入框工具栏里的入口按钮 ---- */
+.trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--dsw-alias-border-l2, rgba(128, 128, 128, 0.22));
+  border-radius: 8px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary, rgba(128, 128, 128, 0.95));
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.trigger:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* 打开状态：与关闭状态共用同一份布局，只换颜色。 */
+.triggerActive {
+  border-color: var(--dsw-alias-state-business-primary, #4d6bfe);
+  background: var(--dsw-alias-state-business-tertiary, rgba(77, 107, 254, 0.14));
+  color: var(--dsw-alias-label-primary, inherit);
+}
+
+/* ---- 弹窗 ---- */
+.mask {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  box-sizing: border-box;
+  background: var(--dsw-alias-bg-mask-1, rgba(0, 0, 0, 0.24));
+  /* 与 DSH Modal 原语一致的遮罩处理。 */
+  backdrop-filter: var(--dsw-mask-blur, blur(2px));
+}
+
+.modal {
+  display: flex;
+  flex-direction: column;
+  width: clamp(600px, 74vw, 900px);
+  max-width: 100%;
+  max-height: 70vh;
+  border: 0;
+  border-radius: 16px;
+  background: var(--dsw-alias-bg-layer-1, #ffffff);
+  box-shadow: var(--dsw-elevation-prominent, 0 4px 16px rgba(0, 0, 0, 0.12));
+  color: var(--dsw-alias-label-primary, inherit);
+  font-size: 13px;
+  overflow: hidden;
+}
+
+.modalHead {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  flex: none;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--dsw-alias-border-l2, rgba(128, 128, 128, 0.22));
+}
+
+/* 标题行：占满剩余宽度，标题过长时允许收缩而不是把关闭按钮挤出去。 */
+.modalHeadTitle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.modalTitle {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.modalHint {
+  color: var(--dsw-alias-label-caption, rgba(128, 128, 128, 0.85));
+  font-size: 12px;
+}
+
+.modalNote {
+  margin: 0;
+  font-size: 12px;
+  color: var(--dsw-alias-label-caption, rgba(128, 128, 128, 0.85));
+}
+
+/* 图标按钮（弹窗右上角的关闭）：比普通次要按钮更紧凑。 */
+.iconButton {
+  min-width: 28px;
+  padding: 0 6px;
+  font-size: 14px;
+  line-height: 1;
+}
+
+/* 唯一的滚动容器（见文件头第 3 条不变量）。 */
+.modalBody {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 16px 18px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  /* 滚动条常驻槽位，避免内容增减时表单左右跳动。 */
+  scrollbar-gutter: stable;
+}
+
+.modalFoot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  flex: none;
+  padding: 12px 16px;
+  border-top: 1px solid var(--dsw-alias-border-l2, rgba(128, 128, 128, 0.22));
+}
+
+/* ---- 分组（见文件头第 1、2 条不变量）---- */
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.sectionHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  gap: 8px;
+  padding: 0 0 8px;
+  border: 0;
+  border-bottom: 1px solid var(--dsw-alias-border-l2, rgba(128, 128, 128, 0.22));
+  background: transparent;
+  color: var(--dsw-alias-label-secondary, rgba(128, 128, 128, 0.95));
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  text-align: left;
+}
+
+.sectionBody {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* 折叠指示符（▾ / ▸）：只换颜色，不占额外布局。 */
+.sectionToggleMark {
+  color: var(--dsw-alias-label-caption, rgba(128, 128, 128, 0.85));
+}
+
+/* ---- 字段与控件 ---- */
+.label {
+  display: block;
+  margin-bottom: 5px;
+  font-size: 12px;
+  color: var(--dsw-alias-label-secondary, rgba(128, 128, 128, 0.95));
+}
+
+.requiredMark {
+  color: var(--dsw-alias-state-error-primary, #e5484d);
+  margin-left: 3px;
+}
+
+.input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 7px 9px;
+  border: 1px solid var(--dsw-alias-border-l2, rgba(128, 128, 128, 0.22));
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.55;
+  resize: vertical;
+}
+
+/* 多行文本域：高度随内容自适应。下限约两行（避免空字段显得过窄），上限约 16 行（再长就在
+   **文本域内部**滚动）。这两个值是 JS 兜底（`fitTextArea`）读 computed style 的来源，
+   因此只在这里写一份 —— 以前 JS 与样式各存一份。 */
+.textarea {
+  min-height: 58px;
+  max-height: 338px;
+}
+
+/* 单行输入不需要纵向拖拽。 */
+.textInput {
+  resize: none;
+}
+
+.chipRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+/* 互斥选项（chip）：选中态只换颜色，布局不变。 */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border: 1px solid var(--dsw-alias-border-l2, rgba(128, 128, 128, 0.22));
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.chipActive {
+  border-color: var(--dsw-alias-state-business-primary, #4d6bfe);
+  background: var(--dsw-alias-state-business-tertiary, rgba(77, 107, 254, 0.14));
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* 逐条编辑：条目纵向排列，「添加一条」靠左对齐（不占满整行）。 */
+.listColumn {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.listAdd {
+  align-self: flex-start;
+}
+
+/* 工具配对编辑里的一句说明文字。 */
+.toolHint {
+  color: var(--dsw-alias-label-caption, rgba(128, 128, 128, 0.85));
+  font-size: 12px;
+}
+
+/* 通用的一行小字（说明、状态、来源）；失败态用 `.dangerText` 覆盖颜色。 */
+.captionText {
+  margin: 0;
+  font-size: 12px;
+  color: var(--dsw-alias-label-caption, rgba(128, 128, 128, 0.85));
+}
+
+.dangerText {
+  color: var(--dsw-alias-state-error-primary, #e5484d);
+}
+
+/* ---- 提示词库：搜索行与结果列表 ---- */
+.searchRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* 占满剩余宽度且允许收缩（输入框在窄列里不被挤爆）。 */
+.grow {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.libraryList {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* 结果条目：整块可点，长文本换行（`.button` 是给单行按钮写的，这里覆盖几处）。 */
+.itemButton {
+  composes: button;
+  display: block;
+  width: 100%;
+  height: auto;
+  padding: 8px 10px;
+  text-align: left;
+  white-space: normal;
+}
+
+.itemTitle {
+  display: block;
+  font-weight: 600;
+}
+
+.itemDescription {
+  display: block;
+  font-size: 12px;
+  color: var(--dsw-alias-label-secondary, rgba(128, 128, 128, 0.95));
+  margin-top: 2px;
+}
+
+.itemAuthor {
+  display: block;
+  font-size: 11px;
+  color: var(--dsw-alias-label-caption, rgba(128, 128, 128, 0.85));
+  margin-top: 2px;
+}
+
+/* 失败态的一行小字：与 `.captionText` 同布局，只换颜色。
+   （单独成一个类，是为了让组件侧不必拼模板字符串。） */
+.dangerCaption {
+  composes: captionText;
+  color: var(--dsw-alias-state-error-primary, #e5484d);
+}
+
+/* 详情里的标题行：标题过长时省略，而不是把返回按钮挤走。 */
+.detailTitle {
+  font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 原文全文：等宽、可滚、保留换行。 */
+.libraryContent {
+  margin: 0;
+  max-height: 46vh;
+  overflow: auto;
+  padding: 10px 12px;
+  border: 1px solid var(--dsw-alias-border-l2, rgba(128, 128, 128, 0.22));
+  border-radius: 8px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 26px;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--dsw-alias-border-l2, rgba(128, 128, 128, 0.22));
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.primaryButton {
+  composes: button;
+  padding: 0 14px;
+  height: 30px;
+  border: 0;
+  background: var(--dsw-alias-state-business-primary, #4d6bfe);
+  color: var(--dsw-alias-label-primary-foreground, #fff);
+  font-weight: 600;
+}
+
+/* 禁用态的视觉由 `panel.css` 的 `[data-dsh-prompt-panel] button:disabled` 统一承担 ——
+   这里不要再写一份：那条的特异性更高（0,2,1 vs 0,2,0），写了也不生效。 */
+
+/* ---- 底部操作栏 ---- */
+.footerRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+/* 模板下拉：宽度受限，否则最长的选项会把这一行撑开、把导入/导出/清空挤下去。 */
+.templateSelect {
+  composes: button;
+  padding: 0 8px;
+  max-width: 260px;
+}
+
+.notice {
+  font-size: 12px;
+  color: var(--dsw-alias-label-secondary, rgba(128, 128, 128, 0.95));
+}
+
+.noticeFailed {
+  color: var(--dsw-alias-state-error-primary, #e5484d);
+}
+
+/* ---- 预览区 ---- */
+.previewDetails {
+  font-size: 12px;
+}
+
+.previewSummary {
+  cursor: pointer;
+  color: var(--dsw-alias-label-secondary, rgba(128, 128, 128, 0.95));
+}
+
+.previewList {
+  margin: 8px 0 0;
+  padding: 0 0 0 16px;
+  color: var(--dsw-alias-label-secondary, rgba(128, 128, 128, 0.95));
+  line-height: 1.7;
+}
+
+.previewPre {
+  margin: 8px 0 0;
+  max-height: 260px;
+  overflow: auto;
+  padding: 10px;
+  border: 1px solid var(--dsw-alias-border-l2, rgba(128, 128, 128, 0.22));
+  border-radius: 8px;
+  white-space: pre-wrap;
+  font-size: 12px;
+  line-height: 1.55;
+}

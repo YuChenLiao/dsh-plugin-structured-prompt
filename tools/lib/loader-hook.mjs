@@ -80,6 +80,13 @@ export async function resolve(specifier, context, next) {
       if (existsSync(new URL(candidate))) return { url: candidate, shortCircuit: true }
     }
   }
+  // 样式导入：源码里的 './x.css' / './x.module.css' 由构建期编译（build.mjs 的 CSS 插件），
+  // 离线运行映射到一个桩模块 —— 组件照常渲染，class map 给可预测的名字（'css-<key>'），
+  // 渲染测试因此仍能断言"某个 class 被用上了"。
+  if (specifier.endsWith('.css')) {
+    const stub = 'export default new Proxy({}, { get: (_, key) => typeof key === "string" ? "css-" + key : undefined });'
+    return { url: 'data:text/javascript,' + encodeURIComponent(stub), shortCircuit: true }
+  }
   return next(specifier, context)
 }
 `

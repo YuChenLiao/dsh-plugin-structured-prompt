@@ -2,12 +2,14 @@
  * 逐条编辑控件：数组字段的增、删、改、上下移序。
  *
  * 数组字段的形状由 `ListFieldMeta` 描述，本控件不认识字段语义。
+ *
+ * 样式在 CSS Modules 里（`shared/ui/panel.module.css`）。
  */
 import type { ReactNode } from 'react'
 import type { ListFieldMeta } from '../../shared/types.js'
 import { Field, SmallButton, TextInput } from '../../../../shared/ui/base.js'
 import type { FormActions } from '../actions.js'
-import { rowStyle } from '../../../../shared/ui/styles.js'
+import s from '../../../../shared/ui/panel.module.css'
 
 /** 逐条编辑控件的 props。 */
 export interface ListEditorProps {
@@ -27,9 +29,9 @@ export interface ListEditorProps {
 export function ListEditor({ field, items, actions }: ListEditorProps): ReactNode {
   return (
     <Field label={field.label}>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <div className={s.listColumn}>
         {items.map((item, index) => (
-          <div key={`item-${index}`} style={rowStyle}>
+          <div key={`item-${index}`} className={s.row}>
             <TextInput
               value={item}
               ariaLabel={`${field.label} 第 ${index + 1} 条`}
@@ -57,7 +59,7 @@ export function ListEditor({ field, items, actions }: ListEditorProps): ReactNod
         ))}
         <SmallButton
           title="添加一条"
-          style={{ alignSelf: 'flex-start' }}
+          className={s.listAdd}
           onClick={() => actions.addItem(field.key, '')}
         >
           + 添加一条

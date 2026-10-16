@@ -338,12 +338,15 @@ src/shared/                           两个组件共用的部分
   plugin-context.ts                   消费到的 Cordis 上下文形态（本地声明，不引入宿主包）
   dsh-client-store.d.ts               DSH store 的本地类型声明（不引入其包）
   ui/
-    theme.ts                          颜色 token 与文本域尺寸
-    styles.ts                         样式对象 + 三条布局不变量 + PANEL_CSS
+    panel.css                         全局注入的样式（伪类、滚动条；选择器锚在共享属性上）
+    css.d.ts                          样式文件的模块声明
+    panel.module.css                  CSS Modules：组件引用的类 + 三条布局不变量
+    use-dialog-frame.ts               弹窗按「自己所在的列」居中（右侧栏开合时跟随）
     base.tsx                          TextArea / TextInput / Field / SmallButton / ChipGroup
     clipboard.ts                      剪贴板写入（含 execCommand 降级）
 tools/
-  lib/build.mjs                       构建脚本（tsdown，三个 host 入口 + 一个 client 产物）
+  lib/build.mjs                       构建脚本（tsdown + lightningcss：两个 host 入口、一个 client
+                                      产物，并把样式表编译成注入模块）
   lib/loader-hook.mjs                 测试用重定向（react / react-dom / 依赖桩）+ .js→.ts 映射
   lib/store-stub.mjs                  defineStore 的离线实现
   setup-dev-links.mjs                 开发态依赖链接（.dev-deps/）

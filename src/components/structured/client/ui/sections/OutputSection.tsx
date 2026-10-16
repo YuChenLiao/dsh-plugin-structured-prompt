@@ -13,7 +13,7 @@ import { ChipGroup, Field, TextArea, TextInput } from '../../../../../shared/ui/
 import { ListEditor } from '../ListEditor.js'
 import { LIST_FIELDS, OUTPUT_FORMAT_OPTIONS } from '../config.js'
 import { applyFormatChoice, formatSpecStatus } from '../../../shared/format.js'
-import { COLORS } from '../../../../../shared/ui/styles.js'
+import s from '../../../../../shared/ui/panel.module.css'
 
 /** 输出与兜底分组的 props。 */
 export interface OutputSectionProps {
@@ -50,7 +50,7 @@ export function OutputSection({ form, actions }: OutputSectionProps): ReactNode 
       {shadowed ? (
         <p
           role="status"
-          style={{ margin: 0, fontSize: 12, color: COLORS.caption }}
+          className={s.captionText}
         >
           格式类型已不生效：下面是手写的输出格式说明，它才是最终契约。
         </p>

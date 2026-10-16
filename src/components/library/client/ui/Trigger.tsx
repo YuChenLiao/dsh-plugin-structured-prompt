@@ -3,12 +3,14 @@
  *
  * 与结构化组件的入口完全平行：自己的 store、自己的开关、自己的弹窗。order 与结构化入口相邻，
  * 因此两个按钮在工具栏里并排出现。
+ *
+ * 样式在 CSS Modules 里（`shared/ui/panel.module.css`）。
  */
 import type { ReactNode } from 'react'
 import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-store'
 import type { LibraryState } from '../../shared/library.js'
 import type { LibraryComponentActions } from '../actions.js'
-import { COLORS, triggerButtonStyle } from '../../../../shared/ui/styles.js'
+import s from '../../../../shared/ui/panel.module.css'
 
 /** 入口按钮的 props。 */
 export interface LibraryTriggerProps {
@@ -33,14 +35,7 @@ export function LibraryTrigger({ useStore, actions, sessionId }: LibraryTriggerP
       type="button"
       data-structured-prompt-library-trigger=""
       data-dsh-prompt-trigger=""
-      style={{
-        ...triggerButtonStyle,
-        borderColor: active ? COLORS.accent : COLORS.border,
-        background: active ? COLORS.accentSoft : 'transparent',
-        color: active ? COLORS.text : COLORS.textSecondary,
-        opacity: disabled ? 0.5 : 1,
-        cursor: disabled ? 'not-allowed' : 'pointer',
-      }}
+      className={active ? `${s.trigger} ${s.triggerActive}` : s.trigger}
       title="提示词库：检索公开提示词库，预览后可直接发送"
       aria-haspopup="dialog"
       aria-expanded={active}

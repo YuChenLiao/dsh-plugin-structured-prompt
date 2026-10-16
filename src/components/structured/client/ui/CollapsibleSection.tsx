@@ -6,7 +6,7 @@
  */
 import type { ReactNode } from 'react'
 import type { SectionMeta } from '../../shared/types.js'
-import { COLORS, sectionBodyStyle, sectionHeadStyle, sectionStyle } from '../../../../shared/ui/styles.js'
+import s from '../../../../shared/ui/panel.module.css'
 
 /** 可折叠分组的 props。 */
 export interface CollapsibleSectionProps {
@@ -30,19 +30,19 @@ export function CollapsibleSection({
 }: CollapsibleSectionProps): ReactNode {
   const open = meta.collapsible !== true || !collapsed
   return (
-    <div style={sectionStyle}>
+    <div className={s.section}>
       <button
         type="button"
-        style={sectionHeadStyle}
+        className={s.sectionHead}
         aria-expanded={open}
         onClick={() => { if (meta.collapsible === true) onToggle() }}
       >
         <span>{meta.title}</span>
         {meta.collapsible === true
-          ? <span style={{ color: COLORS.caption }}>{open ? '▾' : '▸'}</span>
+          ? <span className={s.sectionToggleMark}>{open ? '▾' : '▸'}</span>
           : null}
       </button>
-      {open ? <div style={sectionBodyStyle}>{children}</div> : null}
+      {open ? <div className={s.sectionBody}>{children}</div> : null}
     </div>
   )
 }

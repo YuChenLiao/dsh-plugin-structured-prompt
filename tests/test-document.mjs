@@ -312,7 +312,8 @@ collectNames(PLUGIN_ROOT)
 const declaredNames = [...new Set(
   // 不限反引号：代码结构树整块是 ```text，里面没有反引号，只抓反引号会漏掉绝大多数清单项。
   // 含 `.json`：README 会提到 `package.json`、`tsconfig.json` 与模板库的 `templates.json`。
-  [...readme.matchAll(/([\w-]+(?:\.[\w-]+)*\.(?:tsx?|mjs|json))\b/g)]
+  // 含 `.css`：样式搬进真正的样式文件后（构建期编译 + 注入），它也是要列进结构树的源文件。
+  [...readme.matchAll(/([\w-]+(?:\.[\w-]+)*\.(?:tsx?|mjs|json|css))\b/g)]
     // 排除外部工具的路径（README 里给过 tsx 自己的 loader 绝对路径），它们不属于本仓库。
     .filter(match => !readme.slice(Math.max(0, match.index - 40), match.index).includes('node_modules/'))
     .map(match => match[1]),
@@ -340,7 +341,7 @@ check('README 的文件清单覆盖了 src/ 下的每个文件', undocumented.le
 check('README 的文件清单覆盖面足够（不是只列了两三个文件）', declaredNames.length >= 35,
   `${declaredNames.length} 个`)
 const declaredPaths = [...new Set(
-  [...readme.matchAll(/((?:src|tests|tools)\/[\w./-]+\.(?:d\.ts|tsx?|mjs))/g)].map(match => match[1]),
+  [...readme.matchAll(/((?:src|tests|tools)\/[\w./-]+\.(?:d\.ts|tsx?|mjs|css))/g)].map(match => match[1]),
 )]
 const missingPaths = declaredPaths.filter(rel => !existsSync(resolve(PLUGIN_ROOT, rel)))
 check('README 里的完整路径都存在',

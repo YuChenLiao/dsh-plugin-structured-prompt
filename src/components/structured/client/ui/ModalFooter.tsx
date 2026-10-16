@@ -5,13 +5,16 @@
  * ——「复制」（把成稿放进剪贴板）与「发送」（作为一条用户消息投递进当前会话）。
  *
  * 关闭不在这里：标题栏的 `×` 与 Esc 已经覆盖，底部再放一个只是重复。
+ *
+ * 样式在 CSS Modules 里（`shared/ui/panel.module.css`）；禁用态的视觉由 `.button:disabled`
+ * 与 `.primaryButton:disabled` 承担，不在组件里算 opacity。
  */
 import type { ChangeEvent, ReactNode, RefObject } from 'react'
 import type { PromptForm } from '../../shared/types.js'
 import type { FormActions } from '../actions.js'
 import { SmallButton } from '../../../../shared/ui/base.js'
 import { TEMPLATES, findTemplate } from '../../shared/templates.js'
-import { COLORS, buttonStyle, modalFootStyle, primaryButtonStyle, rowStyle } from '../../../../shared/ui/styles.js'
+import s from '../../../../shared/ui/panel.module.css'
 
 /** 底部操作栏的一次性提示。 */
 export interface Notice {
@@ -52,14 +55,14 @@ export function ModalFooter({
   actions, onExport, onImportClick, importRef, onImportChange, onCopy, notice, onSend, canSend,
 }: ModalFooterProps): ReactNode {
   return (
-    <div style={modalFootStyle}>
-      <div style={{ ...rowStyle, flexWrap: 'wrap' }}>
+    <div className={s.modalFoot}>
+      <div className={s.footerRow}>
         <select
-          // `maxWidth` 是必要的：**选项文本本身**带了场景说明，不加约束时最长的选项会把这一
-          // 行撑开、把导入/导出/清空挤下去；收起时宽度受限，展开的列表里仍能看到完整文案。
-          // （下面的 `title` 不是展示路径 —— 浏览器不据此渲染 option 提示，它只是辅助技术的
-          // 兜底；场景的展示靠选项文本本身。）
-          style={{ ...buttonStyle, padding: '0 8px', maxWidth: 260 }}
+          // 宽度上限是必要的：**选项文本本身**带了场景说明，不加约束时最长的选项会把这一行撑开、
+          // 把导入/导出/清空挤下去；收起时宽度受限，展开的列表里仍能看到完整文案。
+          // （下面的 `title` 不是展示路径 —— 浏览器不据此渲染 option 提示，它只是辅助技术的兜底；
+          // 场景的展示靠选项文本本身。）
+          className={s.templateSelect}
           value=""
           title="用内置模板填充表单"
           aria-label="用内置模板填充表单"
@@ -93,11 +96,11 @@ export function ModalFooter({
         <SmallButton title="清空全部字段" onClick={() => actions.reset()}>清空</SmallButton>
       </div>
 
-      <div style={{ ...rowStyle, flexWrap: 'wrap' }}>
+      <div className={s.footerRow}>
         {notice === null ? null : (
           <span
             role="status"
-            style={{ fontSize: 12, color: notice.kind === 'ok' ? COLORS.textSecondary : COLORS.danger }}
+            className={notice.kind === 'ok' ? s.notice : `${s.notice} ${s.noticeFailed}`}
           >
             {notice.text}
           </span>
@@ -111,11 +114,7 @@ export function ModalFooter({
         </SmallButton>
         <button
           type="button"
-          style={{
-            ...primaryButtonStyle,
-            opacity: canSend ? 1 : 0.5,
-            cursor: canSend ? 'pointer' : 'not-allowed',
-          }}
+          className={s.primaryButton}
           disabled={!canSend}
           title={canSend ? '把提示词投递进当前会话' : '身份与目标为必填'}
           onClick={onSend}

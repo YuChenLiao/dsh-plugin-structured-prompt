@@ -3,23 +3,14 @@
  *
  * 从 `LibraryModal.tsx` 拆出（单文件行数上限）。它只接收状态与回调、自己不发起请求 ——
  * 请求由容器负责，与表单弹窗把副作用留在 `Modal` 的分工一致。
+ *
+ * 样式在 CSS Modules 里（`shared/ui/panel.module.css`）。
  */
-import type { CSSProperties, ReactNode } from 'react'
+import type { ReactNode } from 'react'
 import type { LibraryState } from '../../shared/library.js'
 import type { LibraryComponentActions } from '../actions.js'
 import { SmallButton, TextInput } from '../../../../shared/ui/base.js'
-import { COLORS, buttonStyle, rowStyle } from '../../../../shared/ui/styles.js'
-
-/** 结果条目：整块可点，长文本换行（`buttonStyle` 是为单行按钮写的，这里要覆盖几处）。 */
-const itemStyle: CSSProperties = {
-  ...buttonStyle,
-  display: 'block',
-  width: '100%',
-  height: 'auto',
-  padding: '8px 10px',
-  textAlign: 'left',
-  whiteSpace: 'normal',
-}
+import s from '../../../../shared/ui/panel.module.css'
 
 /** 列表视图的 props。 */
 export interface LibraryListProps {
@@ -51,8 +42,8 @@ export function LibraryList({ library, actions, onSearch, onOpen }: LibraryListP
 
   return (
     <>
-      <div style={{ ...rowStyle, gap: 8 }}>
-        <div style={{ flex: '1 1 auto', minWidth: 0 }}>
+      <div className={s.searchRow}>
+        <div className={s.grow}>
           <TextInput
             value={library.query}
             ariaLabel="检索提示词"
@@ -64,30 +55,30 @@ export function LibraryList({ library, actions, onSearch, onOpen }: LibraryListP
       </div>
       <p
         role="status"
-        style={{ margin: 0, fontSize: 12, color: library.status === 'failed' ? COLORS.danger : COLORS.caption }}
+        className={library.status === 'failed' ? s.dangerCaption : s.captionText}
       >
         {statusLine}
       </p>
-      <div data-library-list="" style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <div data-library-list="" className={s.libraryList}>
         {library.items.map(item => (
           <button
             key={item.id}
             type="button"
             data-library-item={item.id}
-            style={itemStyle}
+            className={s.itemButton}
             title="查看全文"
             onClick={() => onOpen(item.id)}
           >
-            <span style={{ display: 'block', fontWeight: 600 }}>
+            <span className={s.itemTitle}>
               {item.title === '' ? '(无标题)' : item.title}
             </span>
             {item.description === '' ? null : (
-              <span style={{ display: 'block', fontSize: 12, color: COLORS.textSecondary, marginTop: 2 }}>
+              <span className={s.itemDescription}>
                 {item.description}
               </span>
             )}
             {item.author === '' ? null : (
-              <span style={{ display: 'block', fontSize: 11, color: COLORS.caption, marginTop: 2 }}>
+              <span className={s.itemAuthor}>
                 {`@${item.author}`}
               </span>
             )}

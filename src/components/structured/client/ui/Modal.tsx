@@ -31,14 +31,9 @@ import { RulesSection } from './sections/RulesSection.js'
 import { ToolsSection } from './sections/ToolsSection.js'
 import { parseFormDocument, serializeForm } from '../../shared/forms.js'
 import { buildSystemPromptSections, renderPrompt, validateForm } from '../../shared/prompt.js'
-import {
-  COLORS,
-  maskStyle,
-  modalBodyStyle,
-  modalHeadStyle,
-  modalStyle,
-  rowStyle,
-} from '../../../../shared/ui/styles.js'
+// 样式在 CSS Modules 里（构建期 hash 化 + 自动注入），组件只引用类名。
+import s from '../../../../shared/ui/panel.module.css'
+import { useDialogFrame } from '../../../../shared/ui/use-dialog-frame.js'
 
 /** 提示的展示时长（ms）。 */
 const COPY_HINT_MS = 1800
@@ -69,7 +64,10 @@ export function StructuredPromptModal({
 }: StructuredPromptModalProps): ReactNode {
   const [notice, setNotice] = useState<Notice | null>(null)
   const importRef = useRef<HTMLInputElement>(null)
+  const maskRef = useRef<HTMLDivElement>(null)
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // 遮罩按弹窗所在的列居中（右栏开合会自动跟随），见 useDialogFrame。
+  const dialogFrame = useDialogFrame(maskRef)
 
   // 卸载时清掉未触发的提示定时器，避免在已卸载组件上 setState。
   useEffect(() => () => {
@@ -168,24 +166,27 @@ export function StructuredPromptModal({
 
   return (
     <div
-      style={maskStyle}
+      ref={maskRef}
+      data-dsh-prompt-mask=""
+      className={s.mask}
+      style={dialogFrame}
       role="presentation"
       // 刻意不绑定 onClick：点遮罩属于误触高发区，已填内容不该因此丢失。
     >
       <div
         data-structured-prompt-modal=""
         data-dsh-prompt-panel=""
-        style={modalStyle}
+        className={s.modal}
         role="dialog"
         aria-modal
         aria-label="结构化输入任务"
       >
-        <div style={modalHeadStyle}>
-          <div style={{ ...rowStyle, flex: '1 1 auto', minWidth: 0 }}>
-            <span style={{ fontSize: 14, fontWeight: 600 }}>结构化输入任务</span>
+        <div className={s.modalHead}>
+          <div className={s.modalHeadTitle}>
+            <span className={s.modalTitle}>结构化输入任务</span>
             {missing.length > 0
               ? (
-                <span style={{ color: COLORS.caption, fontSize: 12 }}>
+                <span className={s.modalHint}>
                   {`还差必填：${missing.join('、')}`}
                 </span>
               )
@@ -194,14 +195,14 @@ export function StructuredPromptModal({
           <SmallButton
             title="关闭（不改动输入框内容）"
             ariaLabel="关闭"
-            style={{ minWidth: 28, padding: '0 6px', fontSize: 14, lineHeight: 1 }}
+            className={s.iconButton}
             onClick={onClose}
           >
             ×
           </SmallButton>
         </div>
 
-        <div data-scroll="" style={modalBodyStyle}>
+        <div data-scroll="" className={s.modalBody}>
           {applied === undefined ? null : (
             // 场景条是**表单状态的陈述**（这份表单来自哪套模板），不是一次性提示：它会一直
             // 显示到用户改套用别的模板、导入或清空。`data-applied-template` 是给渲染测试
@@ -211,7 +212,7 @@ export function StructuredPromptModal({
               // 底部栏的 notice 已经占了 live region，同页再来一个只会变噪音。
               role="note"
               data-applied-template=""
-              style={{ margin: 0, fontSize: 12, color: COLORS.caption }}
+              className={s.modalNote}
             >
               {`已套用模板「${applied.label}」：${applied.whenToUse}。模板里的目标是形态化的，请把本次的具体任务写进「目标」。`}
             </p>

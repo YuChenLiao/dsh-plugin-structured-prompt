@@ -87,8 +87,11 @@ check('apply() 不抛错', applyError === null, applyError === null ? '' : Strin
 check('apply() 注册了四个槽位（两个组件各两条）',
   bench.registrations.length === 4, `实际 ${bench.registrations.length}`)
 check('apply() 处理了四个 inject 目标', bench.injected.length === 4, bench.injected.join(', '))
-check('apply() 注入了样式 effect',
-  bench.effects.includes('structured-prompt: styles'), bench.effects.join(' | '))
+// 样式注入现在由**构建产物**承担：`tools/lib/build.mjs` 的 CSS 插件把 `.css` 编译成幂等的注入
+// 模块（`style[data-plugin-css]` 去重），在 bundle 执行时自动完成。所以 apply 不该再碰 document ——
+// 否则同一份样式会被注入两次。这条断言因此反过来写。
+check('apply() 不再自己注入样式（注入由构建产物承担）',
+  bench.effects.every(name => !String(name).includes('style')), bench.effects.join(' | '))
 
 // ---- 2) 关键契约：每个注册都声明 store（否则 useStore 为 undefined）----
 

@@ -11,42 +11,15 @@
  * 可以指向自托管实例）。发送走与表单成稿**同一条**链路（宿主的 `onSend`）。
  */
 import { useRef, useState } from 'react'
-import type { CSSProperties, ReactNode } from 'react'
+import type { ReactNode } from 'react'
 import type { LibraryState } from '../../shared/library.js'
 import type { LibraryComponentActions } from '../actions.js'
 import { SmallButton } from '../../../../shared/ui/base.js'
 import { copyText } from '../../../../shared/ui/clipboard.js'
 import { fetchLibraryDetail, searchLibrary, searchPatch } from '../library.js'
 import { LibraryList } from './LibraryList.js'
-import {
-  COLORS,
-  maskStyle,
-  modalBodyStyle,
-  modalFootStyle,
-  modalHeadStyle,
-  modalStyle,
-  primaryButtonStyle,
-  rowStyle,
-} from '../../../../shared/ui/styles.js'
-
-/** 次要说明文字。 */
-const captionStyle: CSSProperties = { margin: 0, fontSize: 12, color: COLORS.caption }
-
-/** 原文预览：按内容换行、可横向滚动（原文里可能有长行与表格）。 */
-const contentStyle: CSSProperties = {
-  margin: 0,
-  padding: '10px 12px',
-  border: `1px solid ${COLORS.border}`,
-  borderRadius: 8,
-  background: 'transparent',
-  color: 'inherit',
-  font: 'inherit',
-  fontSize: 12,
-  lineHeight: 1.6,
-  whiteSpace: 'pre-wrap',
-  wordBreak: 'break-word',
-  overflowX: 'auto',
-}
+import s from '../../../../shared/ui/panel.module.css'
+import { useDialogFrame } from '../../../../shared/ui/use-dialog-frame.js'
 
 /** 检索弹窗的 props。 */
 export interface LibraryModalProps {
@@ -73,6 +46,9 @@ export function LibraryModal({
   // B"会让慢的那个响应覆盖新状态（详情与所选条目错位）。
   const searchSeq = useRef(0)
   const detailSeq = useRef(0)
+  const maskRef = useRef<HTMLDivElement>(null)
+  // 遮罩按弹窗所在的列居中（右栏开合会自动跟随），与表单弹窗共用同一处实现。
+  const dialogFrame = useDialogFrame(maskRef)
   const detail = library.detail
   const inDetail = library.selectedId !== ''
 
@@ -137,26 +113,22 @@ export function LibraryModal({
 
   const detailView = (
     <>
-      <div style={{ ...rowStyle, gap: 8 }}>
+      <div className={s.searchRow}>
         <SmallButton title="返回检索结果" onClick={backToList}>← 返回</SmallButton>
-        <span
-          style={{
-            fontWeight: 600, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-          }}
-        >
+        <span className={s.detailTitle}>
           {detail === null ? '' : (detail.title === '' ? '(无标题)' : detail.title)}
         </span>
       </div>
       {library.detailStatus === 'searching' ? (
-        <p role="status" style={captionStyle}>读取全文…</p>
+        <p role="status" className={s.captionText}>读取全文…</p>
       ) : library.detailStatus === 'failed' ? (
-        <p role="status" style={{ ...captionStyle, color: COLORS.danger }}>{library.failure}</p>
+        <p role="status" className={s.dangerCaption}>{library.failure}</p>
       ) : detail === null ? (
-        <p role="status" style={captionStyle}>这条提示词没有可显示的内容</p>
+        <p role="status" className={s.captionText}>这条提示词没有可显示的内容</p>
       ) : (
         <>
-          {detail.description === '' ? null : <p style={captionStyle}>{detail.description}</p>}
-          <pre data-library-content="" style={contentStyle}>{detail.content}</pre>
+          {detail.description === '' ? null : <p className={s.captionText}>{detail.description}</p>}
+          <pre data-library-content="" className={s.libraryContent}>{detail.content}</pre>
         </>
       )}
     </>
@@ -166,52 +138,55 @@ export function LibraryModal({
 
   return (
     <div
-      style={maskStyle}
+      ref={maskRef}
+      data-dsh-prompt-mask=""
+      className={s.mask}
+      style={dialogFrame}
       role="presentation"
       // 与表单弹窗一样刻意不绑定点击关闭：误触不该丢掉已经检索到的东西。
     >
       <div
         data-structured-prompt-library=""
         data-dsh-prompt-panel=""
-        style={modalStyle}
+        className={s.modal}
         role="dialog"
         aria-modal
         aria-label="提示词库"
       >
-        <div style={modalHeadStyle}>
-          <div style={{ ...rowStyle, flex: '1 1 auto', minWidth: 0 }}>
-            <span style={{ fontSize: 14, fontWeight: 600 }}>提示词库</span>
-            <span style={{ color: COLORS.caption, fontSize: 12 }}>
+        <div className={s.modalHead}>
+          <div className={s.modalHeadTitle}>
+            <span className={s.modalTitle}>提示词库</span>
+            <span className={s.modalHint}>
               {inDetail ? '原文预览：未经本插件整理，直接发送的就是这段文本' : '检索公共提示词库里的提示词'}
             </span>
           </div>
           <SmallButton
             title="关闭（不改动输入框内容）"
             ariaLabel="关闭"
-            style={{ minWidth: 28, padding: '0 6px', fontSize: 14, lineHeight: 1 }}
+            className={s.iconButton}
             onClick={onClose}
           >
             ×
           </SmallButton>
         </div>
 
-        <div data-scroll="" style={modalBodyStyle}>
+        <div data-scroll="" className={s.modalBody}>
           {inDetail
             ? detailView
             : <LibraryList library={library} actions={actions} onSearch={runSearch} onOpen={openDetail} />}
         </div>
 
-        <div style={modalFootStyle}>
+        <div className={s.modalFoot}>
           {detailReady ? (
             <>
-              <span style={captionStyle}>
+              <span className={s.captionText}>
                 {copied ? '已复制到剪贴板' : '来自提示词库的原文，未经本插件整理'}
               </span>
-              <div style={{ ...rowStyle, flexWrap: 'wrap' }}>
+              <div className={s.footerRow}>
                 <SmallButton title="复制原文到剪贴板" onClick={copyContent}>复制</SmallButton>
                 <button
                   type="button"
-                  style={primaryButtonStyle}
+                  className={s.primaryButton}
                   title="把这段原文作为一条用户消息发送进当前会话"
                   onClick={send}
                 >
@@ -220,7 +195,7 @@ export function LibraryModal({
               </div>
             </>
           ) : (
-            <span style={captionStyle}>
+            <span className={s.captionText}>
               {library.source === ''
                 // 还没检索过、或宿主没带回来源名时的中性说明。
                 ? '来源：公共提示词库（请求由宿主代发，浏览器不直连）'

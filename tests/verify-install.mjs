@@ -189,6 +189,10 @@ if (existsSync(clientEntry)) {
   check('共享模块 react 走 require 外部引用', source.includes('require("react")'))
   check('不再 require DSH 其它包（依赖面最小）',
     !/require\("@deepseek-ai\/dsh-(?!client-store)/.test(source))
+  // 样式由构建期编译成注入模块（与 DSH 官方包同一套做法）：产物里必须能看到注入器与编译后的 CSS，
+  // 否则"样式搬进 css 文件"就只是源文件换了个地方，实际没有任何东西被注入。
+  check('client 产物含样式注入器（构建期 CSS 插件生效）',
+    source.includes('data-plugin-css') && source.includes('data-dsh-prompt-panel'))
 }
 
 // 6) 源码保持模块化：单文件行数上限

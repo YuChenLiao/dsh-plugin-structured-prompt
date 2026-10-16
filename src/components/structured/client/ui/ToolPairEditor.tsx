@@ -6,12 +6,14 @@
  * 负责把用户点名的工具按序写进提示词。
  *
  * 增删都经由 store 的 `addTool` / `removeTool`，保证两个数组长度始终一致。
+ *
+ * 样式在 CSS Modules 里（`shared/ui/panel.module.css`）。
  */
 import type { ReactNode } from 'react'
 import type { PromptForm } from '../../shared/types.js'
 import { Field, SmallButton, TextInput } from '../../../../shared/ui/base.js'
 import type { FormActions } from '../actions.js'
-import { COLORS, rowStyle } from '../../../../shared/ui/styles.js'
+import s from '../../../../shared/ui/panel.module.css'
 
 /** 工具配对编辑器的 props。 */
 export interface ToolPairEditorProps {
@@ -31,9 +33,9 @@ export function ToolPairEditor({ form, actions }: ToolPairEditorProps): ReactNod
   const slots = form.toolSlots
   return (
     <Field label="可调用的工具（工具名 + 用途）">
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <div className={s.listColumn}>
         {names.map((name, index) => (
-          <div key={`tool-${index}`} style={rowStyle}>
+          <div key={`tool-${index}`} className={s.row}>
             <TextInput
               value={name}
               ariaLabel={`第 ${index + 1} 个工具名`}
@@ -53,14 +55,14 @@ export function ToolPairEditor({ form, actions }: ToolPairEditorProps): ReactNod
         ))}
         <SmallButton
           title="添加一个工具"
-          style={{ alignSelf: 'flex-start' }}
+          className={s.listAdd}
           onClick={() => actions.addTool()}
         >
           + 添加一个工具
         </SmallButton>
         {names.length === 0
           ? (
-            <div style={{ color: COLORS.caption, fontSize: 12 }}>
+            <div className={s.toolHint}>
               尚未点名任何工具。手动策略下模型只被允许调用这里列出的工具。
             </div>
           )

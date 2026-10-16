@@ -9,8 +9,7 @@ import type { ReactNode } from 'react'
 import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-store'
 import type { StructuredState } from '../../shared/types.js'
 import type { FormActions } from '../actions.js'
-import { COLORS, triggerButtonStyle } from '../../../../shared/ui/styles.js'
-
+import s from '../../../../shared/ui/panel.module.css'
 /** 入口按钮的 props。 */
 export interface StructuredInputTriggerProps {
   /** store 的读座位。 */
@@ -36,14 +35,7 @@ export function StructuredInputTrigger({
       type="button"
       data-structured-prompt-trigger=""
       data-dsh-prompt-trigger=""
-      style={{
-        ...triggerButtonStyle,
-        borderColor: active ? COLORS.accent : COLORS.border,
-        background: active ? COLORS.accentSoft : 'transparent',
-        color: active ? COLORS.text : COLORS.textSecondary,
-        opacity: disabled ? 0.5 : 1,
-        cursor: disabled ? 'not-allowed' : 'pointer',
-      }}
+      className={active ? `${s.trigger} ${s.triggerActive}` : s.trigger}
       title="结构化输入任务：打开结构化提示词表单"
       aria-haspopup="dialog"
       aria-expanded={active}
