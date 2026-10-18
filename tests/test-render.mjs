@@ -679,6 +679,43 @@ check('列尺寸为 0 时退回 CSS 的 inset: 0（不写定位）',
   Object.keys(frameFromRect({ left: 0, width: 0, height: 0 })).length === 0,
   JSON.stringify(frameFromRect({ left: 0, width: 0, height: 0 })))
 
+// ---- 11) 自动填充的界面状态 ----
+//
+// 这一节守状态机：审查用突变实测，删掉"进行中不发"零红 —— 所以至少要覆盖"running 时按钮
+// 禁用且文案变化"，以及失败态/成功态各自显示什么、旧错误会不会残留。
+
+instance.actions.open()
+instance.actions.patchAssist({ brief: '帮我写个告警排查的提示词', status: 'idle', error: '', warnings: [] })
+const assistIdle = okHtml()
+check('自动填充行渲染出输入框与按钮（带状态锚点）',
+  !renderFailed(assistIdle)
+  && assistIdle.includes('data-assist-status="idle"')
+  && assistIdle.includes('aria-label="一句话需求（自动填充）"'),
+  assistIdle.slice(0, 200))
+
+instance.actions.patchAssist({ status: 'running' })
+const assistRunning = okHtml()
+check('进行中：按钮禁用、文案变「生成中…」、状态锚点跟随', (() => {
+  if (renderFailed(assistRunning)) return false
+  const anchor = /<div[^>]*data-assist-status="([a-z]+)"/.exec(assistRunning)
+  const disabled = /<button[^>]*disabled[^>]*>[^<]*生成中…/.test(assistRunning)
+  return anchor?.[1] === 'running' && disabled
+})(), assistRunning.slice(0, 300))
+
+instance.actions.patchAssist({ status: 'failed', error: '取不到当前会话，无法启动子代理' })
+check('失败态把原因显示出来', okHtml().includes('取不到当前会话'))
+
+instance.actions.patchAssist({
+  status: 'done', error: '', warnings: ['忽略字段 rules：取值不符合 string[]'],
+})
+const assistDone = okHtml()
+check('成功态显示丢弃条数与原因，且旧错误不再残留',
+  !renderFailed(assistDone)
+  && assistDone.includes('丢弃了 1 处不合法内容')
+  && assistDone.includes('忽略字段 rules')
+  && !assistDone.includes('取不到当前会话'),
+  assistDone.slice(0, 300))
+
 if (failed > 0) {
   console.error(`\n${failed} 项渲染测试未通过。`)
   process.exit(1)

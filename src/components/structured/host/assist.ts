@@ -2,22 +2,22 @@
  * 自动填充（host 半边）：跑一次子代理，把一句简短需求扩写成结构化字段的增量补丁。
  *
  * 结果**不进主 agent 的上下文**：这条链路的发起方是 HTTP 路由（浏览器），结果也只回到浏览器，
- * 主对话里看不到任何内容。
+ * 主对话里看不到任何内容（唯一痕迹是会话树里会多一个子会话）。
  *
  * 三条硬约束：
  *  1. 子代理的 `parent` 必须是一个 **Session**（DSH 的 `subagent/src/catalog.ts` 里是
- *     `parent: Session`），所以请求必须带 `sessionId`；host 侧按它**探测**取 Session（不同版本
- *     取法不同），拿不到就明确报错，绝不编一个假父级。
+ *     `parent: Session`），所以请求必须带 `sessionId`；`findSession` 按鸭子类型探测，取不到就
+ *     报 409，绝不编一个假父级。
  *  2. 模型输出**必须**过 `parseFormDocument` 的逐字段校验才落进表单 —— 非法字段被丢弃、问题原样
  *     回传，绝不"看起来像就采用"。
- *  3. 提示词由 {@link buildAssistPrompt} 构造，字段清单从 `FIELD_SHAPES` 动态生成。
+ *  3. 提示词由 `buildAssistPrompt` 构造，字段清单从 `FIELD_SHAPES` 派生，素材整体 JSON 包裹。
  *
- * 放 host 半边而不是客户端，是因为模型调用、Session 探测、跑子代理都只在宿主侧存在；浏览器那边
- * 只发一个 POST 并渲染结果。
+ * 输入解析那三件纯判断在 `assist-input.ts`；提示词在 `assist-prompt.ts`。
  */
 import { parseFormDocument } from '../shared/forms.js'
 import type { PromptForm } from '../shared/types.js'
 import { buildAssistPrompt } from './assist-prompt.js'
+import { extractJsonObject, findSession, narrowCurrent } from './assist-input.js'
 import { resolveProviderName, runForeground } from './subagents.js'
 import type { SubagentsServiceLike } from './subagents.js'
 
@@ -29,6 +29,9 @@ export const ASSIST_TIMEOUT_MS = 90_000
 
 /** 一句话需求的最大长度（字符）。超出直接拒绝，避免把整篇文档塞进来。 */
 export const ASSIST_MAX_BRIEF = 4_000
+
+// 提取逻辑在 assist-input.ts；这里转出去，调用方（含测试）只认 assist.ts 这个入口。
+export { extractJsonObject } from './assist-input.js'
 
 /** 扩写结果。 */
 export interface AssistOutcome {
@@ -53,53 +56,6 @@ export interface AssistContext {
   readonly get?: (name: string) => unknown
   readonly effect?: (callback: () => () => void, label?: string) => void
   readonly inject?: (deps: readonly string[], callback: (scoped: AssistContext) => void) => unknown
-}
-
-/**
- * 从模型输出里提取 JSON 对象。
- *
- * 模型常把 JSON 包在 ```json 围栏里、或在前后加一句话。这里只做"定位最外层花括号"这一件事：
- * **不做任何启发式修补** —— 修补过的 JSON 会把错误藏起来。
- * @param text - 模型输出。
- * @returns 解析出的对象；找不到或解析失败时为 `undefined`。
- */
-export function extractJsonObject(text: string): unknown {
-  const start = text.indexOf('{')
-  const end = text.lastIndexOf('}')
-  if (start < 0 || end <= start) return undefined
-  try {
-    const parsed: unknown = JSON.parse(text.slice(start, end + 1))
-    return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed) ? parsed : undefined
-  } catch {
-    return undefined
-  }
-}
-
-/**
- * 按 id 探测取出 Session（不同 DSH 版本的取法不同，这里逐个试）。
- * @param ctx - host 上下文。
- * @param sessionId - 目标会话。
- * @returns Session；取不到时为 `undefined`。
- */
-function findSession(ctx: AssistContext, sessionId: string): unknown {
-  const sessions = ctx.get?.('sessions') as Record<string, unknown> | undefined
-  if (sessions === undefined) return undefined
-  for (const name of ['get', 'byId', 'find', 'resolve']) {
-    const fn = sessions[name]
-    if (typeof fn !== 'function') continue
-    const value = (fn as (id: string) => unknown).call(sessions, sessionId)
-    if (value !== undefined && value !== null) return value
-  }
-  // 会话作用域上下文上可能挂着 session 本体。
-  const scope = typeof sessions['scope'] === 'function'
-    ? (sessions['scope'] as (id: string) => Record<string, unknown> | undefined).call(sessions, sessionId)
-    : undefined
-  const owned = scope?.['session']
-  if (owned !== undefined) return owned
-  const viaGet = typeof scope?.['get'] === 'function'
-    ? (scope['get'] as (name: string) => unknown).call(scope, 'session')
-    : undefined
-  return viaGet ?? undefined
 }
 
 /**
@@ -155,10 +111,7 @@ export async function runAssist(ctx: AssistContext, request: Request): Promise<A
     return { error: error instanceof Error ? error.message : String(error), status: 501 }
   }
 
-  const current = (typeof record['current'] === 'object' && record['current'] !== null
-    ? record['current']
-    : {}) as Partial<PromptForm>
-
+  const current = narrowCurrent(record['current'])
   const signal = AbortSignal.any([request.signal, AbortSignal.timeout(ASSIST_TIMEOUT_MS)])
   let output: string
   try {

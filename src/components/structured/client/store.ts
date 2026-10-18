@@ -36,8 +36,15 @@ export interface StructuredActions {
   open(draft: StructuredState): void
   /** 关闭表单弹窗（表单内容保留，便于再次进入）。 */
   close(draft: StructuredState): void
-  /** 整表替换（模板填充 / JSON 导入）。 */
+  /** 整表替换（模板填充 / JSON 导入 —— 未给的字段会被清成空）。 */
   setForm(draft: StructuredState, form: Partial<PromptForm>): void
+  /**
+   * 按字段合并（自动填充用）。
+   *
+   * 与 {@link setForm} 的区别是**只覆盖给定的键**：模型只补了 ole/goal 时，用户已经填好的
+   * 其它字段必须原样留着 —— 用 setForm 会把它们清空（那是模板填充/导入的语义，不是补全的）。
+   */
+  mergeForm(draft: StructuredState, patch: Partial<PromptForm>): void
   /** 写入单个字段；值的类型由字段名推导。 */
   setField<K extends keyof PromptForm>(draft: StructuredState, key: K, value: PromptForm[K]): void
   /** 数组字段追加一条。 */
@@ -78,6 +85,7 @@ export function createStructuredInputStore(): StructuredInputStore {
       open: (draft) => { draft.active = true },
       close: (draft) => { draft.active = false },
       setForm: (draft, form) => { draft.form = completeForm(form) },
+      mergeForm: (draft, patch) => { Object.assign(draft.form, patch) },
       setField: (draft, key, value) => { draft.form[key] = value },
       addItem: (draft, key, value) => { draft.form[key].push(value) },
       setItem: (draft, key, index, value) => {

@@ -82,10 +82,12 @@ export function StructuredInputPanel({
         actions.patchAssist({ status: 'failed', error: result.error })
         return
       }
-      actions.setForm(result.value.patch)
+      // 只合并模型给到的字段：用 setForm 会把用户已填、而模型没返回的字段清空。
+      actions.mergeForm(result.value.patch)
       // 扩写不是"套用模板"：套用标记必须清掉，否则场景条会声称表单来自某套内置模板。
       actions.setAppliedTemplate('')
-      actions.patchAssist({ status: 'done', warnings: [...result.value.warnings] })
+      // 成功时一并清掉上一次失败的 error，否则它会和成功提示同时显示。
+      actions.patchAssist({ status: 'done', error: '', warnings: [...result.value.warnings] })
     })
   }
 

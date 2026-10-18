@@ -28,7 +28,7 @@ export function AssistRow({ assist, onBriefChange, onAssist }: AssistRowProps): 
   const running = assist.status === 'running'
   return (
     <>
-      <div className={s.row}>
+      <div className={s.row} data-assist-status={assist.status}>
         <div className={s.grow}>
           <TextInput
             value={assist.brief}

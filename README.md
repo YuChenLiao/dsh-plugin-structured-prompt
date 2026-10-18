@@ -293,6 +293,7 @@ src/components/                       两个组件各自成目录（形态参考
       config.ts                       装载行配置（只认 provider）与 Config schema
       assist.ts                       自动填充：跑一次子代理，把一句话扩写成字段补丁
       assist-prompt.ts                自动填充的提示词构造（字段清单从 FIELD_SHAPES 派生）
+      assist-input.ts                 JSON 提取、入参收窄、父级 Session 探测（三件纯判断）
     shared/                           与 client 半边共用的纯逻辑
       types.ts                        表单与组件状态类型
       forms.ts                        空白表单、片段补全、导出/导入的版本化文档
