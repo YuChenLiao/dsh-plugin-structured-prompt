@@ -21,12 +21,14 @@ export interface LlmServiceLike {
 
 /** 一次单次调用的请求。 */
 export interface LlmCallRequest {
-  /** 模型路由（来自装载行配置）。 */
+  /** 模型路由（默认取自当前会话的模型选择）。 */
   readonly provider: string
-  /** 模型名（来自装载行配置）。 */
+  /** 模型名（默认取自当前会话的模型选择）。 */
   readonly model: string
   /** 完整提示词（系统指令与素材都在里面）。 */
   readonly prompt: string
+  /** 推理强度：跟着当前会话走，免得两处不一致。 */
+  readonly reasoningEffort?: string
   /** 取消信号。 */
   readonly signal: AbortSignal
 }
@@ -54,6 +56,7 @@ export async function generateText(llm: LlmServiceLike, request: LlmCallRequest)
     model: request.model,
     messages: [message],
     signal: request.signal,
+    ...(request.reasoningEffort === undefined ? {} : { reasoningEffort: request.reasoningEffort }),
   })) {
     const record = chunk as { type?: unknown; text?: unknown }
     if (record.type === 'text-delta' && typeof record.text === 'string') text += record.text

@@ -22,6 +22,7 @@ import type { StructuredPluginConfig } from './config.js'
 import { generateText } from './assist-llm.js'
 import type { LlmServiceLike } from './assist-llm.js'
 import { buildAssistPrompt } from './assist-prompt.js'
+import { readSessionModel } from './assist-model.js'
 import { extractJsonObject, findSession, narrowCurrent } from './assist-input.js'
 import { resolveProviderName, runForeground } from './subagents.js'
 import type { SubagentsServiceLike } from './subagents.js'
@@ -135,11 +136,17 @@ export async function runAssist(
 
   const llm = ctx.get?.('llm') as LlmServiceLike | undefined
   const subagents = ctx.get?.('subagents') as SubagentsServiceLike | undefined
-  const route = config.assistProvider === undefined || config.assistModel === undefined
+  // 模型来源优先级：**当前会话正在用的模型**（"继承当前对话"）→ 装载行配置 → 都没有。
+  const sessionModel = readSessionModel(ctx, sessionId)
+  const route = sessionModel ?? (config.assistProvider === undefined || config.assistModel === undefined
     ? undefined
-    : { provider: config.assistProvider, model: config.assistModel }
+    : { provider: config.assistProvider, model: config.assistModel })
   if (route === undefined && subagents === undefined) {
-    return { error: '当前组装既没有配置自动填充的模型，也没有子代理服务', status: 501 }
+    return {
+      error: '读不到当前对话的模型，也没有配置 assistProvider / assistModel'
+        + '（通常意味着这个会话还没发过请求，所以还没有模型选择）',
+      status: 501,
+    }
   }
 
   const signal = AbortSignal.any([request.signal, AbortSignal.timeout(ASSIST_TIMEOUT_MS)])

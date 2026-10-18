@@ -1618,6 +1618,82 @@ libraryEntry.apply(hostCtx(libraryConnection), { libraryBaseUrl: 'https://host/s
 check('提示词库组件入口注册两条路由（经 ctx.inject），且不需要 tools',
   libraryApplyRoutes.length === 2, String(libraryApplyRoutes.length))
 
+// ---- 11) 模型继承：自动填充用「当前对话正在用的模型」----
+//
+// 使用者要求不必配置、直接继承当前对话。DSH 把这件事记在会话投影 `modelSelection`
+// （state 形如 `{ lastUsed, pending }`）里：`pending` 是尚未生效的切换，所以
+// `pending ?? lastUsed` 就是"下一次请求会用的模型"。
+
+const assistModelModule = await import(
+  pathToFileURL(resolve(SRC, 'components', 'structured', 'host', 'assist-model.ts')).href
+)
+/** 造一个 Session 鸭子类型 + 带投影的作用域。 */
+const sessionScope = projectionState => ({
+  session: { append: () => {}, id: 's1' },
+  sessionProjections: {
+    stateOf: (session, key) => (key === 'modelSelection' ? projectionState : undefined),
+  },
+})
+const modelCtx = projectionState => ({
+  get: name => (name === 'sessions'
+    ? { get: () => ({ append: () => {}, id: 's1' }), scope: () => sessionScope(projectionState) }
+    : undefined),
+})
+
+check('读会话模型：pending 优先（尚未生效的切换）',
+  assistModelModule.readSessionModel(
+    modelCtx({ lastUsed: { provider: 'p1', model: 'm1' }, pending: { provider: 'p2', model: 'm2' } }),
+    's1',
+  )?.['model'] === 'm2')
+check('读会话模型：pending 为空时退回 lastUsed',
+  assistModelModule.readSessionModel(
+    modelCtx({ lastUsed: { provider: 'p1', model: 'm1' }, pending: null }),
+    's1',
+  )?.['model'] === 'm1')
+check('读会话模型：形状不全时返回 undefined（不猜默认模型）',
+  assistModelModule.readSessionModel(modelCtx({ lastUsed: { provider: '', model: 'x' } }), 's1') === undefined
+  && assistModelModule.readSessionModel(modelCtx({ lastUsed: null, pending: null }), 's1') === undefined)
+check('读会话模型：推理强度跟着会话一起带出',
+  assistModelModule.readSessionModel(
+    modelCtx({ lastUsed: { provider: 'p1', model: 'm1', reasoningEffort: 'high' } }),
+    's1',
+  )?.['reasoningEffort'] === 'high')
+
+// 优先级：会话模型 > 装载行配置。
+const capturedCalls = []
+const recordLlm = {
+  stream(options) {
+    capturedCalls.push(options)
+    return (async function* generate() {
+      yield { type: 'text-delta', text: '{"role":"我是会话模型生成的"}' }
+    })()
+  },
+}
+const assistInherited = await assistModule.runAssist(
+  {
+    get: name => {
+      if (name === 'llm') return recordLlm
+      if (name === 'sessions') {
+        return {
+          get: () => ({ append: () => {}, id: 's1' }),
+          scope: () => sessionScope({ lastUsed: { provider: 'sessionProv', model: 'sessionModel' } }),
+        }
+      }
+      return undefined
+    },
+  },
+  new Request('http://x/', {
+    method: 'POST',
+    body: JSON.stringify({ brief: '做个审查', sessionId: 's1' }),
+  }),
+  { assistProvider: 'configProv', assistModel: 'configModel' },
+)
+check('自动填充优先用会话模型（配置只是回退）',
+  'patch' in assistInherited
+  && capturedCalls[0]?.['provider'] === 'sessionProv'
+  && capturedCalls[0]?.['model'] === 'sessionModel',
+  JSON.stringify(capturedCalls.map(call => ({ p: call['provider'], m: call['model'] }))))
+
 if (failed > 0) {
   console.error(`\n${failed} 项工具测试未通过。`)
   process.exit(1)
