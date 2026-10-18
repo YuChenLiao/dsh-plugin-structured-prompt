@@ -86,6 +86,8 @@ export interface StructuredState {
    * 渲染测试只能驱动 store，本地状态在 SSR 下不可观测（等于没有守护）。
    */
   appliedTemplate: string
+  /** 自动填充（一句话 → 字段）的输入与状态。 */
+  assist: AssistState
 }
 
 /** 四个分组的元数据。 */
@@ -117,4 +119,21 @@ export interface PromptTemplate {
   readonly whenToUse: string
   /** 返回**完整**表单（未填项由模板自己给空值），交给 store 的 `setForm`。 */
   build(): PromptForm
+}
+
+/**
+ * 自动填充的状态。
+ *
+ * 放在 store 而不是组件本地：离线渲染测试只能驱动 store（与 `appliedTemplate` 同一个理由），
+ * 而这条链路的四种状态（空 / 进行中 / 成功 / 失败）都要能被断言。
+ */
+export interface AssistState {
+  /** 用户写的一句话需求。 */
+  brief: string
+  /** 请求状态。 */
+  status: 'idle' | 'running' | 'done' | 'failed'
+  /** 失败说明；成功时为空串。 */
+  error: string
+  /** 宿主的校验结果：被丢弃或改写的内容说明。 */
+  warnings: string[]
 }

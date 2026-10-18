@@ -1,24 +1,18 @@
 /**
  * 表单弹窗：标题栏 + 可滚动内容区 + 底部操作栏。
  *
- * 两条不变量在这里落地（并由离线测试断言）：
- *  - 只有内容区滚动：标题栏与底部操作栏 `flex: none` 常驻，滚动条只出现在内容区
- *    右侧；
- *  - 点遮罩**不关闭**：遮罩不绑定点击处理器，避免误触丢掉已填内容；关闭只经由
- *    标题栏的 `×` 或 Esc。
+ * 两条不变量在这里落地（离线测试断言）：只有内容区滚动（标题栏与底栏 `flex: none`）、
+ * 点遮罩**不关闭**（关闭只经由 `×` 或 Esc，避免误触丢掉已填内容）。第三条不变量在
+ * `shared/ui/panel.module.css`：分组容器既不裁剪也不压缩。
  *
- * （第三条不变量在 `styles.ts`：分组容器既不裁剪也不压缩。）
- *
- * 内容区顶部在套用模板时多一条场景条（`data-applied-template`）：它是**界面陈述**，不参与提示词构建 —— 成稿只由 `form` 决定。
- *
- * 主要动作是「复制」（成稿进剪贴板）与「发送」（把成稿投递进当前会话）；不提供
- * 「同步并返回」这类中间态 —— 要么复制走，要么直接发出去。
+ * 主要动作是「复制」与「发送」；不提供「同步并返回」这类中间态 —— 要么复制走，要么直接发出去。
  */
 import { useEffect, useRef, useState } from 'react'
 import type { ChangeEvent, ReactNode } from 'react'
-import type { PromptForm, PromptTemplate } from '../../shared/types.js'
+import type { AssistState, PromptForm, PromptTemplate } from '../../shared/types.js'
 import type { FormActions } from '../actions.js'
 import { SmallButton } from '../../../../shared/ui/base.js'
+import { AssistRow } from './AssistRow.js'
 import { CollapsibleSection } from './CollapsibleSection.js'
 import { ModalFooter } from './ModalFooter.js'
 import type { Notice } from './ModalFooter.js'
@@ -52,6 +46,12 @@ export interface StructuredPromptModalProps {
   onClose: () => void
   /** 把成稿作为一条用户消息投递进当前会话。 */
   onSend: (prompt: string) => void
+  /** 自动填充的状态（一句话需求、进行中、结果说明）。 */
+  assist: AssistState
+  /** 改写那句话需求。 */
+  onBriefChange: (brief: string) => void
+  /** 请宿主跑一次扩写。 */
+  onAssist: () => void
 }
 
 /**
@@ -60,7 +60,7 @@ export interface StructuredPromptModalProps {
  * @returns 弹窗元素。
  */
 export function StructuredPromptModal({
-  form, collapsed, applied, actions, onClose, onSend,
+  form, collapsed, applied, actions, onClose, onSend, assist, onBriefChange, onAssist,
 }: StructuredPromptModalProps): ReactNode {
   const [notice, setNotice] = useState<Notice | null>(null)
   const importRef = useRef<HTMLInputElement>(null)
@@ -206,6 +206,9 @@ export function StructuredPromptModal({
         </div>
 
         <div data-scroll="" className={s.modalBody}>
+          {/* 自动填充：一句话 → 字段。请求由带 `sessionId` 的容器发起，本组件只渲染状态 ——
+              与「复制 / 发送」的分工一致，网络与 store 副作用都不在这里。 */}
+          <AssistRow assist={assist} onBriefChange={onBriefChange} onAssist={onAssist} />
           {applied === undefined ? null : (
             // 场景条是**表单状态的陈述**（这份表单来自哪套模板），不是一次性提示：它会一直
             // 显示到用户改套用别的模板、导入或清空。`data-applied-template` 是给渲染测试

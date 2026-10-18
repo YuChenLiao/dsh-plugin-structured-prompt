@@ -11,7 +11,7 @@
  */
 import { defineStore } from '@deepseek-ai/dsh-client-store'
 import type { StoreHandle } from '@deepseek-ai/dsh-client-store'
-import type { ListFieldKey, PromptForm, StructuredState } from '../shared/types.js'
+import type { AssistState, ListFieldKey, PromptForm, StructuredState } from '../shared/types.js'
 import { completeForm, createEmptyForm } from '../shared/forms.js'
 
 /**
@@ -26,6 +26,7 @@ function emptyState(): StructuredState {
     form: createEmptyForm(),
     collapsed: ['rules', 'tools', 'output'],
     appliedTemplate: '',
+    assist: { brief: '', status: 'idle', error: '', warnings: [] },
   }
 }
 
@@ -55,6 +56,10 @@ export interface StructuredActions {
   toggleSection(draft: StructuredState, id: string): void
   /** 记录当前表单套用了哪套模板；空串表示不是模板套用状态（导入、手填都算）。 */
   setAppliedTemplate(draft: StructuredState, id: string): void
+  /** 改写自动填充的那句话需求。 */
+  setAssistBrief(draft: StructuredState, brief: string): void
+  /** 局部更新自动填充的状态（开始 / 结果 / 失败都经它落下）。 */
+  patchAssist(draft: StructuredState, patch: Partial<AssistState>): void
   /** 清空表单，回到空白状态。 */
   reset(draft: StructuredState): void
 }
@@ -107,6 +112,8 @@ export function createStructuredInputStore(): StructuredInputStore {
         else draft.collapsed.push(id)
       },
       setAppliedTemplate: (draft, id) => { draft.appliedTemplate = id },
+      setAssistBrief: (draft, brief) => { draft.assist.brief = brief },
+      patchAssist: (draft, patch) => { Object.assign(draft.assist, patch) },
       reset: (draft) => {
         draft.form = createEmptyForm()
         // 清空是「回到空白」：套用标记必须一起走，否则界面会继续声称表单来自某套模板。

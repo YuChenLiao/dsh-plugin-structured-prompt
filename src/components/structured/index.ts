@@ -10,6 +10,8 @@
  */
 import type { HostPluginContext } from './host/tool.js'
 import { registerStructuredPromptTool } from './host/tool.js'
+import { registerAssistRoute } from './host/assist.js'
+import type { AssistContext } from './host/assist.js'
 import { narrowConfig } from './host/config.js'
 
 /**
@@ -30,4 +32,7 @@ export { Config } from './host/config.js'
  */
 export function apply(ctx: HostPluginContext, config?: unknown): void {
   registerStructuredPromptTool(ctx, narrowConfig(config))
+  // 自动填充：跑一次子代理把一句话扩写成字段补丁。与工具一样是**可选能力** —— 没有子代理服务
+  // 或没有 web 载体时它只是不可用（路由里会给出 501 / 跳过注册），不影响"构建提示词"。
+  registerAssistRoute(ctx as unknown as AssistContext)
 }

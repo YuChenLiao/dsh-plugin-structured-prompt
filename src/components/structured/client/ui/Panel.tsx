@@ -5,16 +5,17 @@
  * 提示词库是**另一个槽位条目**（`components/library/client/ui/Panel.tsx`），两者各开各的、
  * 互不干涉 —— 拆分前它们挤在同一个条目里。
  *
- * 发送经由宿主注入的 `onSend`：本组件不接触 `ctx`，也不假定输入框当前是否挂载 —— 决策与副作用
- * 都留在 `apply` 闭包里。
+ * 发送经由宿主注入的 `onSend`；自动填充经由同源路由（宿主代跑子代理）。两者都是**副作用**，
+ * 因此留在这个容器里 —— 弹窗组件只渲染状态，不碰网络。
  *
- * hook 顺序：`useStore` 与 `useEffect` 都必须在任何提前返回**之前**调用。
+ * hook 顺序：`useStore` / `useRef` / `useEffect` 都必须在任何提前返回**之前**调用。
  */
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import type { ReactNode } from 'react'
 import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-store'
 import type { StructuredState } from '../../shared/types.js'
 import { findTemplate } from '../../shared/templates.js'
+import { requestAssist } from '../assist.js'
 import type { FormActions } from '../actions.js'
 import { StructuredPromptModal } from './Modal.js'
 
@@ -42,8 +43,13 @@ export function StructuredInputPanel({
   const form = useStore(state => state.form)
   const collapsed = useStore(state => state.collapsed)
   const appliedTemplate = useStore(state => state.appliedTemplate)
+  const assist = useStore(state => state.assist)
   // id → 模板的解析在这里，而不是在 `Modal` 内部：模板来源属于数据层，界面组件只收结果。
   const applied = findTemplate(appliedTemplate)
+
+  // 自动填充的请求序号：只有最后一次发起的结果能落进表单（与库检索同一套防错位手法 ——
+  // 连点两次时，慢的那个响应不该覆盖新的一次）。
+  const assistSeq = useRef(0)
 
   // Esc 关闭弹窗；未打开时不挂监听。
   useEffect(() => {
@@ -57,6 +63,32 @@ export function StructuredInputPanel({
     return () => { window.removeEventListener('keydown', onKeyDown, true) }
   }, [active, actions])
 
+  /**
+   * 请宿主跑一次扩写，把结果补丁落进表单。
+   *
+   * 三重防护：进行中不再发（防连点）、内容为空不发、序号不符的响应直接丢弃。
+   */
+  const runAssist = (): void => {
+    if (assist.status === 'running') return
+    const brief = assist.brief.trim()
+    if (brief === '' || sessionId === undefined) return
+    assistSeq.current += 1
+    const seq = assistSeq.current
+    actions.patchAssist({ status: 'running', error: '', warnings: [] })
+    // 带上当前表单：宿主会转给子代理，避免把用户已经填好的字段清掉。
+    void requestAssist(brief, form, sessionId).then((result) => {
+      if (seq !== assistSeq.current) return
+      if (!result.ok) {
+        actions.patchAssist({ status: 'failed', error: result.error })
+        return
+      }
+      actions.setForm(result.value.patch)
+      // 扩写不是"套用模板"：套用标记必须清掉，否则场景条会声称表单来自某套内置模板。
+      actions.setAppliedTemplate('')
+      actions.patchAssist({ status: 'done', warnings: [...result.value.warnings] })
+    })
+  }
+
   if (!active || sessionId === undefined) return null
 
   return (
@@ -67,6 +99,9 @@ export function StructuredInputPanel({
       actions={actions}
       onClose={() => actions.close()}
       onSend={onSend}
+      assist={assist}
+      onBriefChange={(brief) => actions.setAssistBrief(brief)}
+      onAssist={runAssist}
     />
   )
 }

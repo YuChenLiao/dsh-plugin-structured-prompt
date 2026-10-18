@@ -291,6 +291,8 @@ src/components/                       两个组件各自成目录（形态参考
       parameters.ts                   参数与输出 schema（标准 JSON Schema）
       subagents.ts                    直投子代理：provider 选择 + 前台 run 的收尾
       config.ts                       装载行配置（只认 provider）与 Config schema
+      assist.ts                       自动填充：跑一次子代理，把一句话扩写成字段补丁
+      assist-prompt.ts                自动填充的提示词构造（字段清单从 FIELD_SHAPES 派生）
     shared/                           与 client 半边共用的纯逻辑
       types.ts                        表单与组件状态类型
       forms.ts                        空白表单、片段补全、导出/导入的版本化文档
@@ -302,6 +304,8 @@ src/components/                       两个组件各自成目录（形态参考
     client/
       store.ts                        会话状态（defineStore 动作表）
       actions.ts                      组件侧的动作类型（打断循环引用）
+      assist.ts                       自动填充的客户端调用（同源路由，不碰 store）
+      ui/AssistRow.tsx                自动填充那一行（输入 + 触发 + 状态）
       ui/
         config.ts                     分组与逐条字段的元数据
         CollapsibleSection.tsx        可折叠分组容器
