@@ -1,21 +1,26 @@
 /**
- * 自动填充（host 半边）：跑一次子代理，把一句简短需求扩写成结构化字段的增量补丁。
+ * 自动填充（host 半边）：把一句简短需求扩写成结构化字段的增量补丁。
  *
- * 结果**不进主 agent 的上下文**：这条链路的发起方是 HTTP 路由（浏览器），结果也只回到浏览器，
- * 主对话里看不到任何内容（唯一痕迹是会话树里会多一个子会话）。
+ * 结果**不进主 agent 的上下文**：这条链路的发起方是 HTTP 路由（浏览器），结果也只回到浏览器。
  *
- * 三条硬约束：
- *  1. 子代理的 `parent` 必须是一个 **Session**（DSH 的 `subagent/src/catalog.ts` 里是
- *     `parent: Session`），所以请求必须带 `sessionId`；`findSession` 按鸭子类型探测，取不到就
- *     报 409，绝不编一个假父级。
- *  2. 模型输出**必须**过 `parseFormDocument` 的逐字段校验才落进表单 —— 非法字段被丢弃、问题原样
- *     回传，绝不"看起来像就采用"。
- *  3. 提示词由 `buildAssistPrompt` 构造，字段清单从 `FIELD_SHAPES` 派生，素材整体 JSON 包裹。
+ * 两条执行路径，**单次调用优先**：
+ *  1. `llm` 服务的 `stream()` —— 一次纯补全，没有工具、没有 agent loop，输出就是那段 JSON，
+ *     也不在会话树里留子会话。前提是装载行配了 `assistProvider` + `assistModel`（DSH 的
+ *     `GenerateOptions` 里这两项必填且无默认值）。
+ *  2. 子代理（`subagents.start`）—— 零配置也能用，但它跑的是**完整 agent**，输出格式确定性更低，
+ *     且会长出一个子会话。单次调用**失败时自动回退**到这条（例如某个 adapter 不接受我们构造的
+ *     Message），所以"没验证过"不会变成"功能不可用"。
  *
- * 输入解析那三件纯判断在 `assist-input.ts`；提示词在 `assist-prompt.ts`。
+ * 三条硬约束（两条路径共用）：
+ *  - 模型输出**必须**过 `parseFormDocument` 的逐字段校验才落进表单；
+ *  - 走子代理时 `parent` 必须是一个 Session（DSH `subagent/src/catalog.ts`），取不到报 409；
+ *  - 提示词由 `buildAssistPrompt` 构造，素材整体 JSON 包裹。
  */
 import { parseFormDocument } from '../shared/forms.js'
 import type { PromptForm } from '../shared/types.js'
+import type { StructuredPluginConfig } from './config.js'
+import { generateText } from './assist-llm.js'
+import type { LlmServiceLike } from './assist-llm.js'
 import { buildAssistPrompt } from './assist-prompt.js'
 import { extractJsonObject, findSession, narrowCurrent } from './assist-input.js'
 import { resolveProviderName, runForeground } from './subagents.js'
@@ -24,7 +29,7 @@ import type { SubagentsServiceLike } from './subagents.js'
 /** 本组件的扩写路由（同源，挂在与检索路由同一套 connection 通道上）。 */
 export const ASSIST_ROUTE_PATH = '/api/structured-prompt/assist'
 
-/** 一次扩写的等待上限：子代理是一整个会话，比检索慢得多。 */
+/** 一次扩写的等待上限：子代理是一整个会话，比单次调用慢得多。 */
 export const ASSIST_TIMEOUT_MS = 90_000
 
 /** 一句话需求的最大长度（字符）。超出直接拒绝，避免把整篇文档塞进来。 */
@@ -39,8 +44,10 @@ export interface AssistOutcome {
   readonly patch: Partial<PromptForm>
   /** 校验时丢弃/改写的内容说明；没有问题则为空数组。 */
   readonly warnings: readonly string[]
-  /** 实际使用的 provider 名，便于用户判断是哪个子代理干的。 */
+  /** 实际走的标识：单次调用给 `provider/model`，子代理给 provider 名。 */
   readonly provider: string
+  /** 实际走的是哪条路径（便于排障：`llm` 还是 `subagent`）。 */
+  readonly via: 'llm' | 'subagent'
 }
 
 /** 扩写失败。 */
@@ -74,75 +81,130 @@ function jsonResponse(body: unknown, status: number): Response {
   })
 }
 
-/**
- * 跑一次扩写。
- * @param ctx - host 上下文。
- * @param request - 浏览器请求。
- * @returns 成功时给出补丁，失败时给出可展示的原因与状态码。
- */
-export async function runAssist(ctx: AssistContext, request: Request): Promise<AssistOutcome | AssistFailure> {
-  const subagents = ctx.get?.('subagents') as SubagentsServiceLike | undefined
-  if (subagents === undefined) {
-    return { error: '当前组装没有子代理服务，自动填充不可用', status: 501 }
+/** 请求体的解析结果。 */
+type ParsedRequest =
+  | {
+    readonly ok: true
+    readonly brief: string
+    readonly sessionId: string
+    readonly current: Partial<PromptForm>
   }
+  | { readonly ok: false; readonly failure: AssistFailure }
 
+/**
+ * 解析并校验请求体。
+ * @param request - 浏览器请求。
+ * @returns 合法时给出三个入参，否则给出可展示的失败。
+ */
+async function readRequest(request: Request): Promise<ParsedRequest> {
   let body: unknown
   try {
     body = await request.json()
   } catch {
-    return { error: '请求体不是 JSON', status: 400 }
+    return { ok: false, failure: { error: '请求体不是 JSON', status: 400 } }
   }
   const record = (typeof body === 'object' && body !== null ? body : {}) as Record<string, unknown>
   const brief = typeof record['brief'] === 'string' ? record['brief'].trim() : ''
   const sessionId = typeof record['sessionId'] === 'string' ? record['sessionId'] : ''
-  if (brief === '') return { error: '请先写一句需求', status: 400 }
+  if (brief === '') return { ok: false, failure: { error: '请先写一句需求', status: 400 } }
   if (brief.length > ASSIST_MAX_BRIEF) {
-    return { error: `需求太长（上限 ${ASSIST_MAX_BRIEF} 字）`, status: 413 }
+    return { ok: false, failure: { error: `需求太长（上限 ${ASSIST_MAX_BRIEF} 字）`, status: 413 } }
   }
-  if (sessionId === '') return { error: '缺少 sessionId（子代理需要一个父级会话）', status: 400 }
+  if (sessionId === '') {
+    return { ok: false, failure: { error: '缺少 sessionId（子代理需要一个父级会话）', status: 400 } }
+  }
+  // 入参按字段白名单收窄：`as Partial<PromptForm>` 只是类型断言，运行期什么都不检查。
+  return { ok: true, brief, sessionId, current: narrowCurrent(record['current']) }
+}
 
-  const parent = findSession(ctx, sessionId)
-  if (parent === undefined) return { error: '取不到当前会话，无法启动子代理', status: 409 }
+/**
+ * 跑一次扩写。
+ * @param ctx - host 上下文。
+ * @param request - 浏览器请求。
+ * @param config - 装载行配置（单次调用路径的模型路由来自这里）。
+ * @returns 成功时给出补丁，失败时给出可展示的原因与状态码。
+ */
+export async function runAssist(
+  ctx: AssistContext,
+  request: Request,
+  config: StructuredPluginConfig = {},
+): Promise<AssistOutcome | AssistFailure> {
+  const parsedRequest = await readRequest(request)
+  if (!parsedRequest.ok) return parsedRequest.failure
+  const { brief, sessionId, current } = parsedRequest
 
-  let provider: string
-  try {
-    provider = resolveProviderName(subagents, undefined)
-  } catch (error) {
-    return { error: error instanceof Error ? error.message : String(error), status: 501 }
+  const llm = ctx.get?.('llm') as LlmServiceLike | undefined
+  const subagents = ctx.get?.('subagents') as SubagentsServiceLike | undefined
+  const route = config.assistProvider === undefined || config.assistModel === undefined
+    ? undefined
+    : { provider: config.assistProvider, model: config.assistModel }
+  if (route === undefined && subagents === undefined) {
+    return { error: '当前组装既没有配置自动填充的模型，也没有子代理服务', status: 501 }
   }
 
-  const current = narrowCurrent(record['current'])
   const signal = AbortSignal.any([request.signal, AbortSignal.timeout(ASSIST_TIMEOUT_MS)])
-  let output: string
-  try {
-    const outcome = await runForeground(
-      subagents, provider, buildAssistPrompt(brief, current), 'structured-prompt:autofill', parent, signal,
-    )
-    output = outcome.output
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    const timedOut = signal.aborted && !request.signal.aborted
-    return {
-      error: timedOut ? `子代理在 ${ASSIST_TIMEOUT_MS / 1000} 秒内没有完成` : message,
-      status: timedOut ? 504 : 502,
+  const prompt = buildAssistPrompt(brief, current)
+  let output: string | undefined
+  let provider = ''
+  let via: 'llm' | 'subagent' | undefined
+
+  // 路径 1：单次调用。失败**不立刻报错** —— 回退到子代理再试，否则"某个 adapter 不接受我们
+  // 构造的 Message"会直接表现为功能不可用。
+  if (route !== undefined && llm !== undefined) {
+    try {
+      output = await generateText(llm, { ...route, prompt, signal })
+      provider = `${route.provider}/${route.model}`
+      via = 'llm'
+    } catch {
+      output = undefined
+    }
+  }
+
+  // 路径 2：子代理（零配置可用，或作为路径 1 的回退）。
+  if (output === undefined) {
+    if (subagents === undefined) {
+      return { error: '单次调用失败，且当前组装没有子代理服务可回退', status: 502 }
+    }
+    const parent = findSession(ctx, sessionId)
+    if (parent === undefined) return { error: '取不到当前会话，无法启动子代理', status: 409 }
+    let providerName: string
+    try {
+      providerName = resolveProviderName(subagents, config.provider)
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : String(error), status: 501 }
+    }
+    try {
+      const outcome = await runForeground(
+        subagents, providerName, prompt, 'structured-prompt:autofill', parent, signal,
+      )
+      output = outcome.output
+      provider = providerName
+      via = 'subagent'
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      const timedOut = signal.aborted && !request.signal.aborted
+      return {
+        error: timedOut ? `扩写在 ${ASSIST_TIMEOUT_MS / 1000} 秒内没有完成` : message,
+        status: timedOut ? 504 : 502,
+      }
     }
   }
 
   const parsed = extractJsonObject(output)
   if (parsed === undefined) {
     // 不猜、不修补：把模型原文截一段回去，让人看见它到底说了什么。
-    return { error: `子代理没有返回可解析的 JSON：${output.slice(0, 200)}`, status: 502 }
+    return { error: `模型没有返回可解析的 JSON：${output.slice(0, 200)}`, status: 502 }
   }
 
   // 校验复用导入那条路径：未知键丢弃、类型不符丢弃、越界枚举改写，问题进 warnings。
   const { patch, warnings } = parseFormDocument(JSON.stringify(parsed))
   if (Object.keys(patch).length === 0) {
     return {
-      error: `子代理的输出没有可用字段${warnings.length === 0 ? '' : `（${warnings.join('; ')}）`}`,
+      error: `模型的输出没有可用字段${warnings.length === 0 ? '' : `（${warnings.join('; ')}）`}`,
       status: 502,
     }
   }
-  return { patch, warnings, provider }
+  return { patch, warnings, provider, via: via ?? 'subagent' }
 }
 
 /**
@@ -150,8 +212,9 @@ export async function runAssist(ctx: AssistContext, request: Request): Promise<A
  *
  * 与检索路由同样是"可选服务"：`connection` 不在 `inject` 里，缺失时只跳过注册。
  * @param ctx - host 上下文。
+ * @param config - 装载行配置。
  */
-export function registerAssistRoute(ctx: AssistContext): void {
+export function registerAssistRoute(ctx: AssistContext, config: StructuredPluginConfig): void {
   if (typeof ctx.inject !== 'function') {
     console.warn('[structured-prompt] 无可用的 ctx.inject，跳过自动填充路由注册')
     return
@@ -166,7 +229,7 @@ export function registerAssistRoute(ctx: AssistContext): void {
       path: ASSIST_ROUTE_PATH,
       methods: ['POST'],
       async fetch(request: Request) {
-        const result = await runAssist(scoped, request)
+        const result = await runAssist(scoped, request, config)
         return 'error' in result
           ? jsonResponse({ error: result.error }, result.status)
           : jsonResponse(result, 200)

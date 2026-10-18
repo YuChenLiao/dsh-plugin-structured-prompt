@@ -1414,7 +1414,10 @@ check('空表单时 existingFields 是空对象（不留悬空段）',
 // 失败路径：都给出可展示的原因与状态码，不抛。
 const assistNoService = await assistModule.runAssist(
   { get: () => undefined },
-  new Request('http://x/', { method: 'POST', body: '{}' }),
+  new Request('http://x/', {
+    method: 'POST',
+    body: JSON.stringify({ brief: '做个审查', sessionId: 's1' }),
+  }),
 )
 check('没有子代理服务时返回 501 而不是抛错',
   'error' in assistNoService && assistNoService.status === 501, JSON.stringify(assistNoService))
@@ -1529,6 +1532,80 @@ check('入参收窄：类型不符的数组字段被丢弃，合法的原样保�
 check('入参收窄：非对象一律当空',
   Object.keys(narrowCurrent(null)).length === 0
   && Object.keys(narrowCurrent([1])).length === 0)
+
+// ---- 10) 自动填充的「单次调用」路径（首选）与回退 ----
+//
+// 这条路径用假 llm 服务就能完整验证：只认 text-delta、把增量拼成文本、再走同一套校验。
+// 它比子代理轻得多（无工具、无 agent loop、不留子会话），所以是首选；配置不全会回退。
+
+const assistLlmCalls = []
+const fakeLlm = {
+  stream(options) {
+    assistLlmCalls.push(options)
+    return (async function* generate() {
+      // 故意让"思考过程"里也带一个完整 JSON：只要它被误收进产物，提取器就会取到这个对象
+      // （而不是后面那个正式答案）—— 这样"只认 text-delta"才真的被守住。
+      yield { type: 'reasoning-delta', text: '{"role":"思考过程混进了产物"}' }
+      yield { type: 'text-delta', text: '{"role":"我是 SRE",' }
+      yield { type: 'text-delta', text: '"goal":"排查告警"}' }
+      yield { type: 'finish', reason: 'stop' }
+    })()
+  },
+}
+const assistViaLlm = await assistModule.runAssist(
+  { get: name => (name === 'llm' ? fakeLlm : undefined) },
+  new Request('http://x/', {
+    method: 'POST',
+    body: JSON.stringify({ brief: '做个审查', sessionId: 's1' }),
+  }),
+  { assistProvider: 'deepseek', assistModel: 'deepseek-chat' },
+)
+check('单次调用：只拼 text-delta，reasoning-delta 不进产物',
+  'patch' in assistViaLlm
+  && assistViaLlm.patch['role'] === '我是 SRE'
+  && assistViaLlm.patch['goal'] === '排查告警'
+  && assistViaLlm.via === 'llm',
+  JSON.stringify(assistViaLlm))
+check('单次调用：provider / model 真的传给了 llm 服务（一条 user 消息）',
+  assistLlmCalls.length === 1
+  && assistLlmCalls[0]['provider'] === 'deepseek'
+  && assistLlmCalls[0]['model'] === 'deepseek-chat'
+  && Array.isArray(assistLlmCalls[0]['messages'])
+  && assistLlmCalls[0]['messages'].length === 1,
+  JSON.stringify(assistLlmCalls.map(call => ({ p: call['provider'], m: call['model'] }))))
+
+// 单次调用失败 → 自动回退子代理，而不是直接报错（"没验证过"不该等于"不可用"）。
+const assistFallback = await assistModule.runAssist(
+  {
+    get: name => (name === 'llm'
+      ? { stream: () => { throw new Error('adapter refused') } }
+      : name === 'subagents' ? assistOkRun : name === 'sessions' ? sessionStub : undefined),
+  },
+  new Request('http://x/', {
+    method: 'POST',
+    body: JSON.stringify({ brief: '做个审查', sessionId: 's1' }),
+  }),
+  { assistProvider: 'deepseek', assistModel: 'deepseek-chat' },
+)
+check('单次调用失败时自动回退到子代理',
+  'patch' in assistFallback && assistFallback.via === 'subagent', JSON.stringify(assistFallback))
+
+// 配置：两个字段必须成对出现，只配一半是装载期错误。
+const configModule = await import(
+  pathToFileURL(resolve(SRC, 'components', 'structured', 'host', 'config.ts')).href
+)
+check('配置：只配 assistProvider 不配 assistModel 会报错', (() => {
+  try {
+    configModule.narrowConfig({ assistProvider: 'x' })
+    return false
+  } catch {
+    return true
+  }
+})())
+check('配置：两个都配时收窄正确',
+  configModule.narrowConfig({ assistProvider: 'a', assistModel: 'b' })['assistModel'] === 'b')
+check('配置：Config.validate 对只配一半给出 issues',
+  configModule.Config['~standard'].validate({ assistModel: 'x' })['issues'].length === 1)
 
 const libraryApplyRoutes = []
 const libraryConnection = {

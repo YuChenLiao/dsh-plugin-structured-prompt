@@ -31,8 +31,9 @@ export { Config } from './host/config.js'
  *   `apply` 被直接调用（测试、其它组装）时同样安全 —— 形状不对就抛错，不静默忽略。
  */
 export function apply(ctx: HostPluginContext, config?: unknown): void {
-  registerStructuredPromptTool(ctx, narrowConfig(config))
-  // 自动填充：跑一次子代理把一句话扩写成字段补丁。与工具一样是**可选能力** —— 没有子代理服务
-  // 或没有 web 载体时它只是不可用（路由里会给出 501 / 跳过注册），不影响"构建提示词"。
-  registerAssistRoute(ctx as unknown as AssistContext)
+  const narrowed = narrowConfig(config)
+  registerStructuredPromptTool(ctx, narrowed)
+  // 自动填充：把一句话扩写成字段补丁。可选能力 —— 没有模型配置也没有子代理服务时它只是
+  // 不可用（路由里会给出 501 / 跳过注册），不影响"构建提示词"。
+  registerAssistRoute(ctx as unknown as AssistContext, narrowed)
 }

@@ -1,8 +1,13 @@
 /**
- * 结构化提示词组件的装载行配置（`cordis.patch.yml` 里 `structured` 那条装载行的 `config`）。
+ * 结构化提示词组件的装载行配置（`cordis.patch.yml` 里那条装载行的 `config`）。
  *
- * 组件拆分把配置也按组件切开：本文件只认 `provider`，提示词库的地址在
+ * 组件拆分把配置也按组件切开：本文件只管结构化组件，提示词库的地址在
  * `components/library/host/config.ts` 里 —— 两者不再挤在同一份配置对象里。
+ *
+ * 三个字段分两类：
+ *  - `provider` —— **子代理**的 provider 名（自动填充的回退路径、以及工具 `delegate` 的默认值）；
+ *  - `assistProvider` / `assistModel` —— **单次调用**路径的模型路由。两个都配了才走单次调用
+ *    （DSH 的 `GenerateOptions` 里 provider 与 model 都是必填、无默认值），否则回退到子代理。
  *
  * 配置校验交给 cordis：本模块导出 {@link Config}（standard-schema 的形状），而 cordis 只在插件
  * 导出 `Config` 时才校验配置（`vendor/cordis/src/fiber.ts` 的 `resolveConfig`：没有 `Config` 就把
@@ -22,10 +27,19 @@ export interface StructuredPluginConfig {
    * 还会有别的候选。只在需要改变默认时才写它；调用参数 `delegate.provider` 优先于它。
    */
   readonly provider?: string
+  /**
+   * 自动填充走「单次调用」时的模型路由（如 `deepseek`）。
+   *
+   * 与 `provider` **不共用**：那个是子代理的 provider 名，这个是 llm 服务的路由名。
+   * `assistProvider` 与 `assistModel` 都配了才走单次调用；缺一个就回退到子代理路径。
+   */
+  readonly assistProvider?: string
+  /** 自动填充走「单次调用」时的模型名（与 `assistProvider` 同时配置才生效）。 */
+  readonly assistModel?: string
 }
 
 /** 配置里允许出现的字段（不在其中的字段在装载期报错，而不是被静默忽略）。 */
-const CONFIG_FIELDS = ['provider'] as const
+const CONFIG_FIELDS = ['provider', 'assistProvider', 'assistModel'] as const
 
 /**
  * 收集配置的问题说明。
@@ -45,10 +59,20 @@ function configProblems(raw: unknown): string[] {
   if (unsupported.length > 0) {
     problems.push(`unsupported config field(s): ${unsupported.join(', ')}`)
   }
-  const provider = record['provider']
-  // YAML 里写 `provider:`（空值）解析成 `null`，与"没写"同义，不算类型错误。
-  if (provider !== undefined && provider !== null && typeof provider !== 'string') {
-    problems.push('config.provider must be a string')
+  for (const key of CONFIG_FIELDS) {
+    const value = record[key]
+    // YAML 里写 `key:`（空值）解析成 `null`，与"没写"同义，不算类型错误。
+    if (value !== undefined && value !== null && typeof value !== 'string') {
+      problems.push(`config.${key} must be a string`)
+    }
+  }
+  // 只配一半是配置错误，而不是"静默用单次调用的半个参数"：两个都得给，或者都不给。
+  const hasProvider = typeof record['assistProvider'] === 'string'
+    && (record['assistProvider'] as string).trim() !== ''
+  const hasModel = typeof record['assistModel'] === 'string'
+    && (record['assistModel'] as string).trim() !== ''
+  if (hasProvider !== hasModel) {
+    problems.push('config.assistProvider 与 config.assistModel 必须同时配置')
   }
   return problems
 }
@@ -65,11 +89,22 @@ export function narrowConfig(raw: unknown): StructuredPluginConfig {
     throw new Error(`structured-prompt: invalid config — ${problems.join('; ')}`)
   }
   if (typeof raw !== 'object' || raw === null) return {}
-  const provider = (raw as Record<string, unknown>)['provider']
-  if (typeof provider !== 'string') return {}
+  const record = raw as Record<string, unknown>
   // 空串与纯空白按「没配」处理，与参数边界的「空串算未给」保持一致。
-  const trimmed = provider.trim()
-  return trimmed === '' ? {} : { provider: trimmed }
+  const text = (key: string): string | undefined => {
+    const value = record[key]
+    if (typeof value !== 'string') return undefined
+    const trimmed = value.trim()
+    return trimmed === '' ? undefined : trimmed
+  }
+  const provider = text('provider')
+  const assistProvider = text('assistProvider')
+  const assistModel = text('assistModel')
+  return {
+    ...(provider === undefined ? {} : { provider }),
+    ...(assistProvider === undefined ? {} : { assistProvider }),
+    ...(assistModel === undefined ? {} : { assistModel }),
+  }
 }
 
 /**
