@@ -1398,6 +1398,19 @@ check('提取 JSON：数组、坏 JSON、无花括号都拒绝',
   && assistModule.extractJsonObject('{"a":') === undefined
   && assistModule.extractJsonObject('没有花括号') === undefined)
 
+// 两段 JSON：模型先给示例、再给正式答案时，必须**只取第一个完整对象**。
+// 审查实测：把括号扫描换回"第一个 `{` 到最后一个 `}`"零红 —— 那条捷径会把两段拼成坏 JSON，
+// 报错还会误导人说"模型没给 JSON"。
+check('提取 JSON：两段 JSON 只取第一个完整对象（不是拼成一段坏 JSON）', (() => {
+  const value = assistModule.extractJsonObject('示例 {"a":1} 正式答案 {"b":2}')
+  return typeof value === 'object' && value !== null
+    && value['a'] === 1 && value['b'] === undefined
+})())
+check('提取 JSON：字符串里的花括号不干扰配对', (() => {
+  const value = assistModule.extractJsonObject('{"a":"含 } 与 { 的文本","b":2}')
+  return typeof value === 'object' && value !== null && value['b'] === 2
+})())
+
 // 提示词：字段清单必须来自 FIELD_SHAPES（表单增删字段时自动跟随，而不是手写第二份）。
 const promptForAssist = assistPromptModule.buildAssistPrompt('帮我做个代码审查', {})
 const missingAssistFields = Object.keys(FORM_FIELD_SHAPES)
@@ -1532,6 +1545,18 @@ check('入参收窄：类型不符的数组字段被丢弃，合法的原样保�
 check('入参收窄：非对象一律当空',
   Object.keys(narrowCurrent(null)).length === 0
   && Object.keys(narrowCurrent([1])).length === 0)
+
+// 长度上限：超限要 413，而不是静默接受（审查实测去掉校验零红）。
+// 放在 `assistInputModule` 定义之后 —— 它下面是同一个模块。
+const briefTooLong = await assistInputModule.parseAssistRequest(
+  new Request('http://x/', {
+    method: 'POST',
+    body: JSON.stringify({ brief: 'x'.repeat(40), sessionId: 's1' }),
+  }),
+  { maxBrief: 10 },
+)
+check('一句话超过上限 → 413（不是静默接受）',
+  !briefTooLong.ok && briefTooLong.failure.status === 413, JSON.stringify(briefTooLong))
 
 // ---- 10) 自动填充的「单次调用」路径（首选）与回退 ----
 //

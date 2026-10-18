@@ -720,6 +720,39 @@ check('成功态显示丢弃条数与原因，且旧错误不再残留',
   && !assistDone.includes('取不到当前会话'),
   assistDone.slice(0, 300))
 
+// ---- 12) mergeForm 语义（上一轮那条数据丢失的回归守护）----
+//
+// 审查实测：把 `mergeForm` 改成 `completeForm`（= 清空未给的键）**八套零红**。那条阻断是静默
+// 数据丢失（用户填 5 个字段、模型只回 2 个 → 另外 3 个被清空），修完了却没有回归测试。
+
+instance.actions.reset()
+instance.actions.setField('role', '保留的身份')
+instance.actions.setField('goal', '保留的目标')
+instance.actions.mergeForm({ background: '只补这一个' })
+const mergedForm = instance.getSnapshot().form
+check('mergeForm 只覆盖给定的键，其它已填字段保留',
+  mergedForm.role === '保留的身份' && mergedForm.goal === '保留的目标'
+  && mergedForm.background === '只补这一个',
+  JSON.stringify({ role: mergedForm.role, goal: mergedForm.goal, bg: mergedForm.background }))
+
+// 对照断言：setForm 是**整表替换**。两个动作语义必须不同，否则 mergeForm 就没有存在意义 ——
+// 这条同时也挡住"把 mergeForm 实现成 completeForm"的退化。
+instance.actions.setForm({ role: '只剩这个' })
+const replacedForm = instance.getSnapshot().form
+check('setForm 是整表替换（未给的字段被清空），与 mergeForm 语义不同',
+  replacedForm.role === '只剩这个' && replacedForm.goal === '',
+  JSON.stringify({ role: replacedForm.role, goal: replacedForm.goal }))
+
+// 静态断言：自动填充消费补丁的那一行必须用 mergeForm
+//（审查实测：换回 setForm 八套零红 —— 那正是数据丢失的写法）。
+const panelSource = readFileSync(
+  resolve(CLIENT, '..', 'components', 'structured', 'client', 'ui', 'Panel.tsx'),
+  'utf8',
+)
+check('自动填充消费补丁用 mergeForm（不是 setForm）',
+  /actions\.mergeForm\(result\.value\.patch\)/.test(panelSource)
+  && !/actions\.setForm\(result\.value\.patch\)/.test(panelSource))
+
 if (failed > 0) {
   console.error(`\n${failed} 项渲染测试未通过。`)
   process.exit(1)

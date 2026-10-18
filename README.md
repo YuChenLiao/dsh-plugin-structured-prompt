@@ -91,6 +91,7 @@ host 半边注册一个工具 `build_structured_prompt`，让模型自己把模�
 模型 → build_structured_prompt({ role, goal, delegate: { label: 'review' } })
      → 构建后**直接投给子代理**（前台运行、收集结果、释放运行）
      → 提示词不进入主上下文，只回传子代理的输出
+    → ⚠ 当前 DSH 版本不可用：`subagents.start` 未暴露给插件（见下文「delegate 走可选服务」）
 ```
 
 | 项 | 说明 |
@@ -98,12 +99,12 @@ host 半边注册一个工具 `build_structured_prompt`，让模型自己把模�
 | 必填 | `role`（身份）、`goal`（目标）—— 与表单同一条规则；**用 `template` 时这两项可以省略**，内置模板都带它们 |
 | 可选 | 表单其余字段（`background` / `rules` / `forbidden` / `tool_policy` / `output_format` / `fallback` …） |
 | 模板 | `template` 按任务形态选一套内置模板作默认值（schema 里带每套的一句话场景），调用参数覆盖它 |
-| 直投 | `delegate: { label?, provider? }` 把提示词直接交给子代理执行，不进入本上下文 |
+| 直投 | `delegate: { label?, provider? }` 把提示词直接交给子代理执行，不进入本上下文。**当前 DSH 版本不可用**（`start` 未暴露给插件，会报可读错误） |
 | 返回 | `{ prompt, template, missing, delegated, delegation }`，模型看到的正文就是 `prompt`（或委托时的子代理输出）。`delegation` 非空表示**确实发生了委托**（形如 `spawn/child-1 (completed)`），未委托时为空串 —— 子代理正常完成但没有文本输出时 `delegated` 合法为空串，只能靠它区分「静默的子代理」与「没委托」 |
 
 几个刻意的取舍：
 
-- **`delegate` 走可选服务，不进 `inject`**。`ctx.get('subagents')` 缺失时，`delegate` 报错并指出"不带它调用即可拿到提示词" —— 把可选能力写成硬依赖，会让本插件在没装配子代理 provider 的组装里**整个不激活**。
+- **`delegate` 走可选服务，不进 `inject`**。`ctx.get('subagents')` 缺失时，`delegate` 报错并指出"不带它调用即可拿到提示词" —— 把可选能力写成硬依赖，会让本插件在没装配子代理 provider 的组装里**整个不激活**。**实测提醒**：当前 DSH 版本的 `SubagentRuntime extends TypertRemoteService`，而 `start` 没有 `@Remote` 标注 —— 插件拿到的句柄上没有它。所以 `delegate` 会报一句**可读**的错误（并列出句柄实际暴露的方法名），而不是静默失效；也就是说这条能力**在当前版本不可用**。自动填充因此改为单次调用（`llm.stream`），不依赖子代理。
 - **模板可以替模型带上身份与目标**：`role`/`goal` 通常必填，但只要传了 `template`，缺省或空白的那一项就由模板提供（构建时它们走「调用参数优先、未给用模板底座」）。这不是放松约束，而是让「只填任务特有的字段」真的能发生 —— 参数边界原来强制两者非空，模板永远补不进来，实测 10 次真实调用里有 2 次正是因为漏传 `role` 直接失败。放宽的只是「缺失/空白」，类型错误照旧必报；不带模板时缺 `role` 会报错，错误信息里指出可以用模板。
 - **provider 的默认值来自装载行的 `config`**，代码里不留可配置的假象：不写 `config` 时，只注册一个 provider 就用它，多个时用 `spawn`（存在时）、否则取第一个 —— DSH 的 base bundle 同时注册 `spawn` 与 `fork`，要求调用方显式指定等于让功能开箱不可用，而 `fork` 会继承父会话上下文、语义与「独立委托」相反。要用别的默认就在 `cordis.patch.yml` 里**结构化组件那条装载行**写 `config: { provider: 'fork' }`；调用参数 `delegate.provider` 优先于它（空串与纯空白算「未给」，不会顶掉配置）。只有显式传了未注册的名字才报错并列出候选；一个都没有则明确拒绝。
 - **配置形状由导出的 `Config` 在装载期校验**：两个组件各有自己的 `Config`，聚合入口另有一个**只做分派层检查**的 `Config`（是不是对象、有没有不认识的字段），字段形状仍交给组件（结构化只认 `provider`、提示词库只认 `libraryBaseUrl`），把对方的字段写进某一条装载行会在装载期报"不支持的字段"。`config` 不是对象、含不支持的字段、或 `provider` 不是（写空的）字符串时，cordis 抛 `ValidationError` 并列出问题，`apply` 根本不会被调用 —— 静默忽略会让"profile 里写着 `fork`、实际用着 `spawn`"成为最难定位的那类失效。`Config` 是**手写**的 standard-schema 对象（不 import 校验库，见下节），判定与 `src/components/structured/host/config.ts` 的 `narrowConfig` 同源。两点边界：`provider` 名**是否已注册**要到第一次 `delegate` 才校验（装载期还不知道子代理 provider 注册了什么）；`provider` 必须写在 `config:` 之下，写错层级会被 loader 原样保留、不报错。
@@ -290,8 +291,8 @@ src/components/                       两个组件各自成目录（形态参考
       args.ts                         参数收窄 / 校验 / 默认值回退
       parameters.ts                   参数与输出 schema（标准 JSON Schema）
       subagents.ts                    直投子代理：provider 选择 + 前台 run 的收尾
-      config.ts                       装载行配置（只认 provider）与 Config schema
-      assist.ts                       自动填充：跑一次子代理，把一句话扩写成字段补丁
+      config.ts                       装载行配置（provider 供子代理、assistProvider/assistModel 供单次调用）与 Config schema
+      assist.ts                       自动填充/转化：单次调用（继承会话模型），子代理仅作回退（当前版本不可用）
       assist-prompt.ts                自动填充的提示词构造（一句话 → 字段）
       assist-convert-prompt.ts        转化提示词（库里的成品提示词 → 字段，搬运不改写）
       assist-llm.ts                   单次调用路径（llm.stream）

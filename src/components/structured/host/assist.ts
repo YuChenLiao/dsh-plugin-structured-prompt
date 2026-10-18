@@ -151,12 +151,15 @@ export async function runAssist(
     const canDelegate = subagents !== undefined
       && typeof (subagents as unknown as Record<string, unknown>)['start'] === 'function'
     if (!canDelegate) {
-      // 实测：`SubagentRuntime` 是 `TypertRemoteService`，`start` 没有 `@Remote` 标注，
-      // 插件侧拿到的句柄上没有它。
+      // 三种情况分开报：把"没有 llm 服务"说成"单次调用失败"会让人往错的方向查。
+      // 实测背景：`SubagentRuntime` 是 `TypertRemoteService`，`start` 没有 `@Remote` 标注，
+      // 插件侧拿到的句柄上没有它 —— 所以回退路径在该版本不可用。
       return {
-        error: route === undefined
-          ? '读不到当前对话的模型，也没有配置 assistProvider / assistModel'
-          : '单次调用失败，且当前 DSH 版本的子代理服务不向插件暴露 start()，没有可回退的路径',
+        error: llm === undefined
+          ? '当前组装没有 llm 服务，无法发起模型调用'
+          : route === undefined
+            ? '读不到当前对话的模型，也没有配置 assistProvider / assistModel'
+            : '单次调用失败，且当前 DSH 版本的子代理服务不向插件暴露 start()，没有可回退的路径',
         status: 501,
       }
     }
