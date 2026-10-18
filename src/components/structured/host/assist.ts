@@ -162,8 +162,18 @@ export async function runAssist(
 
   // 路径 2：子代理（零配置可用，或作为路径 1 的回退）。
   if (output === undefined) {
-    if (subagents === undefined) {
-      return { error: '单次调用失败，且当前组装没有子代理服务可回退', status: 502 }
+    const canDelegate = subagents !== undefined
+      && typeof (subagents as unknown as Record<string, unknown>)['start'] === 'function'
+    if (!canDelegate) {
+      // 现实约束（实测于真实环境）：DSH 的 `SubagentRuntime` 是 `TypertRemoteService`，而 `start`
+      // 没有 `@Remote` 标注 —— 插件侧拿到的句柄上没有它。所以这条路径在当前版本不可用。
+      return {
+        error: route === undefined
+          ? '自动填充需要配置模型：请在装载行写 assistProvider 与 assistModel'
+            + '（当前 DSH 版本的子代理服务不向插件暴露 start()）'
+          : '单次调用失败，且当前版本的子代理服务不向插件暴露 start()，没有可回退的路径',
+        status: 501,
+      }
     }
     const parent = findSession(ctx, sessionId)
     if (parent === undefined) return { error: '取不到当前会话，无法启动子代理', status: 409 }

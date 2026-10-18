@@ -201,6 +201,24 @@ export async function runForeground(
   parent: unknown,
   signal: AbortSignal,
 ): Promise<DelegationOutcome> {
+  // 先确认这个服务真的暴露了 `start`。
+  //
+  // 真实环境里 `ctx.get('subagents')` 可能是**远程句柄**：DSH 的 `SubagentRuntime`
+  // `extends TypertRemoteService`，只有标了 `@Remote` 的方法才通过 Gateway 暴露 —— 而 `start`
+  // 没有标。直接调用会得到 `subagents.start is not a function`，对使用者是天书。
+  // 这里把可用方法名一并报出来，便于一眼区分"版本不暴露"与"拿错了服务"。
+  const candidate = subagents as unknown as Record<string, unknown>
+  if (typeof candidate['start'] !== 'function') {
+    const available = Object.keys(candidate)
+      .filter(key => typeof candidate[key] === 'function')
+      .join(', ')
+    throw new Error(
+      'the subagent service in this DSH build does not expose start() '
+      + `(available methods: ${available || '(none)'}); `
+      + 'use a single llm call instead (assistProvider + assistModel)',
+    )
+  }
+
   const run = await subagents.start(providerName, {
     label,
     prompt: [{ type: 'text', text: prompt }],
