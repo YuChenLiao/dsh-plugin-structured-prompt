@@ -118,3 +118,90 @@ export function narrowCurrent(raw: unknown): Partial<PromptForm> {
   }
   return narrowed as Partial<PromptForm>
 }
+
+/** 一次请求的两种动作：`expand`（一句话 → 字段）、`convert`（现成提示词 → 字段）。 */
+export type AssistAction = 'expand' | 'convert'
+
+/** 请求体解析成功后的入参。 */
+export interface AssistRequest {
+  /** 动作。 */
+  readonly action: AssistAction
+  /** `expand`：用户那句话。`convert` 时为空串。 */
+  readonly brief: string
+  /** `convert`：提示词库里的原文。`expand` 时为空串。 */
+  readonly source: string
+  /** `convert`：条目标题（可为空串）。 */
+  readonly title: string
+  /** 会话标识（两条路都要：模型从会话继承，子代理要父级）。 */
+  readonly sessionId: string
+  /** 表单当前值（只有 `expand` 用得上）。 */
+  readonly current: Partial<PromptForm>
+}
+
+/** 解析失败时给可展示的原因与状态码。 */
+export interface AssistRequestFailure {
+  /** 可直接展示的原因。 */
+  readonly error: string
+  /** HTTP 状态码。 */
+  readonly status: number
+}
+
+/** 解析结果。 */
+export type ParsedAssistRequest =
+  | { readonly ok: true; readonly request: AssistRequest }
+  | { readonly ok: false; readonly failure: AssistRequestFailure }
+
+/**
+ * 解析并校验请求体。
+ *
+ * 两种动作的必填项不同（`expand` 要一句话、`convert` 要原文），所以校验分开写 ——
+ * 统一要求"都非空"会让另一条路永远走不通。
+ * @param request - 浏览器请求。
+ * @param limits - 长度上限（由 `assist.ts` 传入，避免重复定义常量）。
+ * @returns 合法时给出入参，否则给出可展示的失败。
+ */
+export async function parseAssistRequest(
+  request: Request,
+  limits: { readonly maxBrief: number },
+): Promise<ParsedAssistRequest> {
+  let body: unknown
+  try {
+    body = await request.json()
+  } catch {
+    return { ok: false, failure: { error: '请求体不是 JSON', status: 400 } }
+  }
+  const record = (typeof body === 'object' && body !== null ? body : {}) as Record<string, unknown>
+  const action: AssistAction = record['action'] === 'convert' ? 'convert' : 'expand'
+  const sessionId = typeof record['sessionId'] === 'string' ? record['sessionId'] : ''
+  if (sessionId === '') {
+    return { ok: false, failure: { error: '缺少 sessionId', status: 400 } }
+  }
+
+  if (action === 'convert') {
+    const source = typeof record['source'] === 'string' ? record['source'] : ''
+    if (source.trim() === '') {
+      return { ok: false, failure: { error: '没有可转化的原文', status: 400 } }
+    }
+    return {
+      ok: true,
+      request: {
+        action,
+        source,
+        title: typeof record['title'] === 'string' ? record['title'] : '',
+        sessionId,
+        brief: '',
+        current: {},
+      },
+    }
+  }
+
+  const brief = typeof record['brief'] === 'string' ? record['brief'].trim() : ''
+  if (brief === '') return { ok: false, failure: { error: '请先写一句需求', status: 400 } }
+  if (brief.length > limits.maxBrief) {
+    return { ok: false, failure: { error: `需求太长（上限 ${limits.maxBrief} 字）`, status: 413 } }
+  }
+  return {
+    ok: true,
+    request: { action, brief, source: '', title: '', sessionId, current: narrowCurrent(record['current']) },
+  }
+}

@@ -16,6 +16,7 @@ import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-store'
 import type { StructuredState } from '../../shared/types.js'
 import { findTemplate } from '../../shared/templates.js'
 import { requestAssist } from '../assist.js'
+import { onFormPatch } from '../../../../shared/assist-bridge.js'
 import type { FormActions } from '../actions.js'
 import { StructuredPromptModal } from './Modal.js'
 
@@ -51,6 +52,16 @@ export function StructuredInputPanel({
   // 连点两次时，慢的那个响应不该覆盖新的一次）。
   const assistSeq = useRef(0)
 
+  // 接收提示词库那边交过来的补丁（"转化为表单"）：合并进当前表单并打开弹窗。
+  // 用一次性事件而不是共享状态 —— 收不到就丢掉，不留下需要清理的残留。
+  useEffect(() => onFormPatch((patch) => {
+    actions.mergeForm(patch)
+    // 转化结果不是"套用模板"：套用标记要清掉，否则场景条会声称表单来自某套内置模板。
+    actions.setAppliedTemplate('')
+    actions.patchAssist({ status: 'done', error: '', warnings: [] })
+    actions.open()
+  }), [actions])
+
   // Esc 关闭弹窗；未打开时不挂监听。
   useEffect(() => {
     if (!active) return undefined
@@ -76,7 +87,7 @@ export function StructuredInputPanel({
     const seq = assistSeq.current
     actions.patchAssist({ status: 'running', error: '', warnings: [] })
     // 带上当前表单：宿主会转给子代理，避免把用户已经填好的字段清掉。
-    void requestAssist(brief, form, sessionId).then((result) => {
+    void requestAssist({ action: 'expand', brief, current: form }, sessionId).then((result) => {
       if (seq !== assistSeq.current) return
       if (!result.ok) {
         actions.patchAssist({ status: 'failed', error: result.error })

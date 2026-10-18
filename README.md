@@ -292,7 +292,8 @@ src/components/                       两个组件各自成目录（形态参考
       subagents.ts                    直投子代理：provider 选择 + 前台 run 的收尾
       config.ts                       装载行配置（只认 provider）与 Config schema
       assist.ts                       自动填充：跑一次子代理，把一句话扩写成字段补丁
-      assist-prompt.ts                自动填充的提示词构造（字段清单从 FIELD_SHAPES 派生）
+      assist-prompt.ts                自动填充的提示词构造（一句话 → 字段）
+      assist-convert-prompt.ts        转化提示词（库里的成品提示词 → 字段，搬运不改写）
       assist-llm.ts                   单次调用路径（llm.stream）
       assist-model.ts                 读当前会话正在用的模型（继承，无需配置）
       assist-input.ts                 JSON 提取、入参收窄、父级 Session 探测（三件纯判断）
@@ -342,6 +343,7 @@ src/components/                       两个组件各自成目录（形态参考
 src/shared/                           两个组件共用的部分
   slots.ts                            槽位注册描述（两个组件的注册清单共用它）
   send.ts                             把内容发进会话（会话作用域的 conversation.send）
+  assist-bridge.ts                    两个组件之间的一次性补丁交接（库「转化为表单」→ 表单）
   plugin-context.ts                   消费到的 Cordis 上下文形态（本地声明，不引入宿主包）
   dsh-client-store.d.ts               DSH store 的本地类型声明（不引入其包）
   ui/

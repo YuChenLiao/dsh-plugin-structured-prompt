@@ -20,6 +20,8 @@ import { fetchLibraryDetail, searchLibrary, searchPatch } from '../library.js'
 import { LibraryList } from './LibraryList.js'
 import s from '../../../../shared/ui/panel.module.css'
 import { useDialogFrame } from '../../../../shared/ui/use-dialog-frame.js'
+import { requestAssist } from '../../../structured/client/assist.js'
+import { offerFormPatch } from '../../../../shared/assist-bridge.js'
 
 /** 检索弹窗的 props。 */
 export interface LibraryModalProps {
@@ -31,6 +33,8 @@ export interface LibraryModalProps {
   onClose: () => void
   /** 把选中的提示词作为一条用户消息投递进当前会话。 */
   onSend: (text: string) => void
+  /** 会话标识：转化走宿主路由时要用（模型从会话继承）。 */
+  sessionId?: string
 }
 
 /**
@@ -39,9 +43,12 @@ export interface LibraryModalProps {
  * @returns 弹窗元素。
  */
 export function LibraryModal({
-  library, actions, onClose, onSend,
+  library, actions, onClose, onSend, sessionId,
 }: LibraryModalProps): ReactNode {
   const [copied, setCopied] = useState(false)
+  // 转化是异步副作用，状态放本地与 copied 同构：不进 store，也不需要跨刷新保留。
+  const [converting, setConverting] = useState(false)
+  const [convertError, setConvertError] = useState('')
   // 请求序号：只有最后一次发起的请求能写状态。没有这个比对时，快速连续检索、或"先点 A 再点
   // B"会让慢的那个响应覆盖新状态（详情与所选条目错位）。
   const searchSeq = useRef(0)
@@ -111,6 +118,31 @@ export function LibraryModal({
     onClose()
   }
 
+  /**
+   * 把原文拆成结构化字段，交给结构化组件的表单。
+   *
+   * 结果**不经由对话**：宿主路由 → 模型 → 补丁 → bridge 一次性交给表单组件并打开它。
+   * 与「发送原始提示词」是两条不同的路：那条把原文当消息发出去，这条只改表单、对话里不留痕。
+   */
+  const convert = (): void => {
+    if (detail === null || sessionId === undefined || converting) return
+    setConverting(true)
+    setConvertError('')
+    void requestAssist({ action: 'convert', source: detail.content, title: detail.title }, sessionId)
+      .then((result) => {
+        if (!result.ok) {
+          setConvertError(result.error)
+          return
+        }
+        // 没有订阅者说明结构化组件当前没挂载；这时"填好并打开"无处呈现，明确告知而不是静默丢弃。
+        if (offerFormPatch(result.value.patch) === 0) {
+          setConvertError('已转化，但结构化表单当前未挂载，无处填入')
+          return
+        }
+        onClose()
+      })
+      .finally(() => { setConverting(false) })
+  }
   const detailView = (
     <>
       <div className={s.searchRow}>
@@ -186,6 +218,13 @@ export function LibraryModal({
               </span>
               <div className={s.footerRow}>
                 <SmallButton title="复制原文到剪贴板" onClick={copyContent}>复制</SmallButton>
+                <SmallButton
+                  title="让模型把这段原文拆解成结构化字段，交给「结构化输入任务」表单"
+                  disabled={converting || sessionId === undefined || detail === null}
+                  onClick={convert}
+                >
+                  {converting ? '转化中…' : '转化为表单'}
+                </SmallButton>
                 <button
                   type="button"
                   className={s.primaryButton}
@@ -195,6 +234,9 @@ export function LibraryModal({
                   发送原始提示词
                 </button>
               </div>
+              {convertError === '' ? null : (
+                <p role="status" className={s.dangerCaption}>{convertError}</p>
+              )}
             </>
           ) : (
             <span className={s.captionText}>

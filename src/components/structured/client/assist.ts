@@ -24,8 +24,10 @@ export interface AssistResult {
   readonly patch: Partial<PromptForm>
   /** 校验时被丢弃/改写的内容说明。 */
   readonly warnings: readonly string[]
-  /** 实际使用的子代理 provider 名。 */
+  /** 实际走的标识：单次调用给 `provider/model`，子代理给 provider 名。 */
   readonly provider: string
+  /** 实际走的是哪条路径（`llm` = 单次调用，`subagent` = 回退）。 */
+  readonly via: 'llm' | 'subagent' | ''
 }
 
 /** 结果包装：成功给值，失败给可展示的说明。 */
@@ -38,16 +40,24 @@ export interface AssistDeps {
 }
 
 /**
- * 请宿主跑一次扩写。
- * @param brief - 用户的一句话需求。
- * @param current - 表单里已填的字段（宿主会转给子代理，避免覆盖用户内容）。
- * @param sessionId - 当前会话（子代理需要一个父级会话）。
+ * 一次请求的输入：两种动作，字段不同。
+ *
+ * `expand` 带一句话需求与表单当前值（避免覆盖用户已填）；`convert` 带库里的原文与标题。
+ * 拆成联合类型而不是全可选，是为了让调用方漏字段时编译期就报错。
+ */
+export type AssistInput =
+  | { readonly action: 'expand'; readonly brief: string; readonly current: Partial<PromptForm> }
+  | { readonly action: 'convert'; readonly source: string; readonly title: string }
+
+/**
+ * 请宿主跑一次扩写 / 转化。
+ * @param input - 动作与它需要的字段。
+ * @param sessionId - 当前会话（模型从会话继承，子代理要父级）。
  * @param deps - 可注入的请求实现。
  * @returns 补丁，或可展示的失败原因。
  */
 export async function requestAssist(
-  brief: string,
-  current: Partial<PromptForm>,
+  input: AssistInput,
   sessionId: string,
   deps?: AssistDeps,
 ): Promise<AssistOutcome<AssistResult>> {
@@ -57,7 +67,13 @@ export async function requestAssist(
     response = await fetchImpl(ASSIST_PATH, {
       method: 'POST',
       headers: { 'content-type': 'application/json', accept: 'application/json' },
-      body: JSON.stringify({ brief, current, sessionId }),
+      body: JSON.stringify({
+        action: input.action,
+        sessionId,
+        ...(input.action === 'convert'
+          ? { source: input.source, title: input.title }
+          : { brief: input.brief, current: input.current }),
+      }),
       signal: AbortSignal.timeout(CLIENT_TIMEOUT_MS),
     })
   } catch (error) {
@@ -101,6 +117,7 @@ export async function requestAssist(
       patch: patch as Partial<PromptForm>,
       warnings,
       provider: typeof record['provider'] === 'string' ? record['provider'] : '',
+      via: record['via'] === 'llm' || record['via'] === 'subagent' ? record['via'] : '',
     },
   }
 }

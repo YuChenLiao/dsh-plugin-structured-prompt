@@ -1694,6 +1694,101 @@ check('自动填充优先用会话模型（配置只是回退）',
   && capturedCalls[0]?.['model'] === 'sessionModel',
   JSON.stringify(capturedCalls.map(call => ({ p: call['provider'], m: call['model'] }))))
 
+// ---- 12) 「转化为表单」：库里的成品提示词 → 字段 ----
+//
+// 与自动填充共用一条链路，差别只在提示词（搬运 vs 推断）与入参（原文 vs 一句话）。
+
+const convertModule = await import(
+  pathToFileURL(resolve(SRC, 'components', 'structured', 'host', 'assist-convert-prompt.ts')).href
+)
+const convertPrompt = convertModule.buildConvertPrompt('你是 SRE。规则：先看监控。', '告警排查')
+check('转化提示词：原文以 JSON 包裹（伪造分隔符改不了结构）',
+  convertPrompt.includes('"prompt": "你是 SRE。规则：先看监控。"'))
+check('转化提示词：字段清单与 FIELD_SHAPES 完全一致',
+  Object.keys(FORM_FIELD_SHAPES).every(key => convertPrompt.includes(`- ${key}:`)))
+check('转化提示词：明确「搬运而不是改写」，并要求保留占位符',
+  convertPrompt.includes('搬运') && convertPrompt.includes('{{变量}}'))
+check('转化提示词：原文过长时说明被截断，而不是静默丢弃', (() => {
+  const long = convertModule.buildConvertPrompt(
+    'x'.repeat(convertModule.CONVERT_MAX_SOURCE + 10),
+    't',
+  )
+  return long.includes('超过') && long.includes('截断')
+})())
+
+// 入参校验：两种动作的必填项不同 —— 统一要求「都非空」会让另一条路永远走不通。
+const expandNoBrief = await assistInputModule.parseAssistRequest(
+  new Request('http://x/', { method: 'POST', body: JSON.stringify({ sessionId: 's1' }) }),
+  { maxBrief: 100 },
+)
+check('expand 缺一句话 → 400（缺 action 时默认 expand）',
+  !expandNoBrief.ok && expandNoBrief.failure.status === 400)
+const convertNoSource = await assistInputModule.parseAssistRequest(
+  new Request('http://x/', {
+    method: 'POST',
+    body: JSON.stringify({ action: 'convert', sessionId: 's1' }),
+  }),
+  { maxBrief: 100 },
+)
+check('convert 缺原文 → 400', !convertNoSource.ok && convertNoSource.failure.status === 400)
+const convertParsed = await assistInputModule.parseAssistRequest(
+  new Request('http://x/', {
+    method: 'POST',
+    body: JSON.stringify({ action: 'convert', source: '原文', title: 't', sessionId: 's1' }),
+  }),
+  { maxBrief: 100 },
+)
+check('convert 合法入参带出 source 与 title（brief 与 current 都为空）',
+  convertParsed.ok && convertParsed.request.source === '原文'
+  && convertParsed.request.title === 't' && convertParsed.request.brief === ''
+  && Object.keys(convertParsed.request.current).length === 0)
+
+// 主链：convert 送进去的是转化提示词，不是扩写提示词。
+const convertCalls = []
+const convertLlm = {
+  stream(options) {
+    convertCalls.push(options)
+    return (async function* generate() {
+      yield { type: 'text-delta', text: '{"role":"我是 SRE"}' }
+    })()
+  },
+}
+const convertRun = await assistModule.runAssist(
+  {
+    get: name => (name === 'llm'
+      ? convertLlm
+      : name === 'sessions'
+        ? {
+          get: () => ({ append: () => {}, id: 's1' }),
+          scope: () => sessionScope({ lastUsed: { provider: 'p', model: 'm' } }),
+        }
+        : undefined),
+  },
+  new Request('http://x/', {
+    method: 'POST',
+    body: JSON.stringify({ action: 'convert', source: '原文正文', title: '标题', sessionId: 's1' }),
+  }),
+)
+check('convert 主链：产出补丁，且提示词里是原文 + 搬运指令（不是扩写指令）', (() => {
+  if (!('patch' in convertRun) || convertRun.patch['role'] !== '我是 SRE') return false
+  const sent = JSON.stringify(convertCalls[0])
+  return sent.includes('原文正文') && sent.includes('搬运')
+})(), JSON.stringify(convertCalls[0] ?? {}).slice(0, 200))
+
+// bridge：一次性交接的语义（收不到就丢，不排队）。
+const bridgeModule = await import(pathToFileURL(resolve(SRC, 'shared', 'assist-bridge.ts')).href)
+bridgeModule.resetFormPatchListeners()
+check('bridge：没有订阅者时投递数为 0（静默丢弃，不留队列）',
+  bridgeModule.offerFormPatch({ role: 'x' }) === 0)
+const bridgeReceived = []
+const unsubscribeBridge = bridgeModule.onFormPatch(patch => { bridgeReceived.push(patch) })
+check('bridge：有订阅者时投递到手上',
+  bridgeModule.offerFormPatch({ role: 'y' }) === 1 && bridgeReceived[0]?.['role'] === 'y')
+unsubscribeBridge()
+check('bridge：退订后不再收到',
+  bridgeModule.offerFormPatch({ role: 'z' }) === 0 && bridgeReceived.length === 1)
+bridgeModule.resetFormPatchListeners()
+
 if (failed > 0) {
   console.error(`\n${failed} 项工具测试未通过。`)
   process.exit(1)

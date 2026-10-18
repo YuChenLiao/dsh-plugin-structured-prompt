@@ -636,6 +636,10 @@ check('界面不写死上游域名（可指向自托管实例）',
 check('详情视图不渲染提示词成稿（两条产出路径互不干涉）',
   !libraryFailed(libraryDetail) && !libraryDetail.includes('# 硬性规则'))
 
+// 「转化为表单」是**主动动作**：只有用户点它时，原文才会经模型变成字段补丁交给表单。
+check('详情视图提供「转化为表单」入口（转化是主动动作，不是自动）',
+  !libraryFailed(libraryDetail) && libraryDetail.includes('转化为表单'))
+
 libraryInstance.actions.close()
 check('关闭检索弹窗后不占空间', panel().html === '')
 

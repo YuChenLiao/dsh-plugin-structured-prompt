@@ -55,6 +55,7 @@ export function LibraryPanel({
       actions={actions}
       onClose={() => actions.close()}
       onSend={onSend}
+      sessionId={sessionId}
     />
   )
 }

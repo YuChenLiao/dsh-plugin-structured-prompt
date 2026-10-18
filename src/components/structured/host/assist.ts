@@ -1,20 +1,22 @@
 /**
- * 自动填充（host 半边）：把一句简短需求扩写成结构化字段的增量补丁。
+ * 自动填充（host 半边）：把**一句话需求**或**一段现成提示词**转成结构化字段的增量补丁。
  *
  * 结果**不进主 agent 的上下文**：这条链路的发起方是 HTTP 路由（浏览器），结果也只回到浏览器。
  *
- * 两条执行路径，**单次调用优先**：
- *  1. `llm` 服务的 `stream()` —— 一次纯补全，没有工具、没有 agent loop，输出就是那段 JSON，
- *     也不在会话树里留子会话。前提是装载行配了 `assistProvider` + `assistModel`（DSH 的
- *     `GenerateOptions` 里这两项必填且无默认值）。
- *  2. 子代理（`subagents.start`）—— 零配置也能用，但它跑的是**完整 agent**，输出格式确定性更低，
- *     且会长出一个子会话。单次调用**失败时自动回退**到这条（例如某个 adapter 不接受我们构造的
- *     Message），所以"没验证过"不会变成"功能不可用"。
+ * 两种动作共用同一条链路，只有提示词不同：
+ *  - `expand` —— 一句话 → 字段（`buildAssistPrompt`）；
+ *  - `convert` —— 提示词库里的成品提示词 → 字段（`buildConvertPrompt`，强调"搬运而不是改写"）。
  *
- * 三条硬约束（两条路径共用）：
+ * 执行路径**单次调用优先**：
+ *  1. `llm` 服务的 `stream()` —— 一次纯补全，没有工具、没有 agent loop，输出就是那段 JSON，
+ *     也不在会话树里留子会话。模型**继承当前对话**（`readSessionModel`），通常无需配置。
+ *  2. 子代理（`subagents.start`）—— 保留作为回退，但**当前 DSH 版本不向插件暴露 `start`**
+ *     （`SubagentRuntime extends TypertRemoteService` 且 `start` 没有 `@Remote`），实测不可用。
+ *
+ * 三条硬约束（共用）：
  *  - 模型输出**必须**过 `parseFormDocument` 的逐字段校验才落进表单；
- *  - 走子代理时 `parent` 必须是一个 Session（DSH `subagent/src/catalog.ts`），取不到报 409；
- *  - 提示词由 `buildAssistPrompt` 构造，素材整体 JSON 包裹。
+ *  - 提示词里的素材整体 JSON 包裹，分隔符无法伪造边界；
+ *  - 入参按 `FIELD_SHAPES` 白名单收窄。
  */
 import { parseFormDocument } from '../shared/forms.js'
 import type { PromptForm } from '../shared/types.js'
@@ -22,8 +24,10 @@ import type { StructuredPluginConfig } from './config.js'
 import { generateText } from './assist-llm.js'
 import type { LlmServiceLike } from './assist-llm.js'
 import { buildAssistPrompt } from './assist-prompt.js'
+import { buildConvertPrompt } from './assist-convert-prompt.js'
+import { extractJsonObject, findSession, parseAssistRequest } from './assist-input.js'
+import type { AssistRequest } from './assist-input.js'
 import { readSessionModel } from './assist-model.js'
-import { extractJsonObject, findSession, narrowCurrent } from './assist-input.js'
 import { resolveProviderName, runForeground } from './subagents.js'
 import type { SubagentsServiceLike } from './subagents.js'
 
@@ -47,7 +51,7 @@ export interface AssistOutcome {
   readonly warnings: readonly string[]
   /** 实际走的标识：单次调用给 `provider/model`，子代理给 provider 名。 */
   readonly provider: string
-  /** 实际走的是哪条路径（便于排障：`llm` 还是 `subagent`）。 */
+  /** 实际走的是哪条路径（便于排障）。 */
   readonly via: 'llm' | 'subagent'
 }
 
@@ -70,7 +74,7 @@ export interface AssistContext {
  * 一个最小的 JSON 响应。
  *
  * 与 `components/library/host/library-upstream.ts` 里的同形 —— 刻意**各自一份**：两个组件之间
- * 没有 import 关系（那条由渲染测试与安装自检共同守着），共享 4 行代码不值得破例。
+ * 没有 import 关系，共享 4 行代码不值得破例。
  * @param body - 响应体。
  * @param status - HTTP 状态码。
  * @returns 响应对象。
@@ -82,47 +86,22 @@ function jsonResponse(body: unknown, status: number): Response {
   })
 }
 
-/** 请求体的解析结果。 */
-type ParsedRequest =
-  | {
-    readonly ok: true
-    readonly brief: string
-    readonly sessionId: string
-    readonly current: Partial<PromptForm>
-  }
-  | { readonly ok: false; readonly failure: AssistFailure }
-
 /**
- * 解析并校验请求体。
- * @param request - 浏览器请求。
- * @returns 合法时给出三个入参，否则给出可展示的失败。
+ * 按动作构造提示词。
+ * @param request - 已校验的入参。
+ * @returns 交给模型的完整提示词。
  */
-async function readRequest(request: Request): Promise<ParsedRequest> {
-  let body: unknown
-  try {
-    body = await request.json()
-  } catch {
-    return { ok: false, failure: { error: '请求体不是 JSON', status: 400 } }
-  }
-  const record = (typeof body === 'object' && body !== null ? body : {}) as Record<string, unknown>
-  const brief = typeof record['brief'] === 'string' ? record['brief'].trim() : ''
-  const sessionId = typeof record['sessionId'] === 'string' ? record['sessionId'] : ''
-  if (brief === '') return { ok: false, failure: { error: '请先写一句需求', status: 400 } }
-  if (brief.length > ASSIST_MAX_BRIEF) {
-    return { ok: false, failure: { error: `需求太长（上限 ${ASSIST_MAX_BRIEF} 字）`, status: 413 } }
-  }
-  if (sessionId === '') {
-    return { ok: false, failure: { error: '缺少 sessionId（子代理需要一个父级会话）', status: 400 } }
-  }
-  // 入参按字段白名单收窄：`as Partial<PromptForm>` 只是类型断言，运行期什么都不检查。
-  return { ok: true, brief, sessionId, current: narrowCurrent(record['current']) }
+function promptFor(request: AssistRequest): string {
+  return request.action === 'convert'
+    ? buildConvertPrompt(request.source, request.title)
+    : buildAssistPrompt(request.brief, request.current)
 }
 
 /**
- * 跑一次扩写。
+ * 跑一次转化 / 扩写。
  * @param ctx - host 上下文。
  * @param request - 浏览器请求。
- * @param config - 装载行配置（单次调用路径的模型路由来自这里）。
+ * @param config - 装载行配置（模型回退项）。
  * @returns 成功时给出补丁，失败时给出可展示的原因与状态码。
  */
 export async function runAssist(
@@ -130,14 +109,14 @@ export async function runAssist(
   request: Request,
   config: StructuredPluginConfig = {},
 ): Promise<AssistOutcome | AssistFailure> {
-  const parsedRequest = await readRequest(request)
-  if (!parsedRequest.ok) return parsedRequest.failure
-  const { brief, sessionId, current } = parsedRequest
+  const parsed = await parseAssistRequest(request, { maxBrief: ASSIST_MAX_BRIEF })
+  if (!parsed.ok) return parsed.failure
+  const assistRequest = parsed.request
 
   const llm = ctx.get?.('llm') as LlmServiceLike | undefined
   const subagents = ctx.get?.('subagents') as SubagentsServiceLike | undefined
   // 模型来源优先级：**当前会话正在用的模型**（"继承当前对话"）→ 装载行配置 → 都没有。
-  const sessionModel = readSessionModel(ctx, sessionId)
+  const sessionModel = readSessionModel(ctx, assistRequest.sessionId)
   const route = sessionModel ?? (config.assistProvider === undefined || config.assistModel === undefined
     ? undefined
     : { provider: config.assistProvider, model: config.assistModel })
@@ -150,7 +129,7 @@ export async function runAssist(
   }
 
   const signal = AbortSignal.any([request.signal, AbortSignal.timeout(ASSIST_TIMEOUT_MS)])
-  const prompt = buildAssistPrompt(brief, current)
+  const prompt = promptFor(assistRequest)
   let output: string | undefined
   let provider = ''
   let via: 'llm' | 'subagent' | undefined
@@ -167,22 +146,21 @@ export async function runAssist(
     }
   }
 
-  // 路径 2：子代理（零配置可用，或作为路径 1 的回退）。
+  // 路径 2：子代理（回退）。
   if (output === undefined) {
     const canDelegate = subagents !== undefined
       && typeof (subagents as unknown as Record<string, unknown>)['start'] === 'function'
     if (!canDelegate) {
-      // 现实约束（实测于真实环境）：DSH 的 `SubagentRuntime` 是 `TypertRemoteService`，而 `start`
-      // 没有 `@Remote` 标注 —— 插件侧拿到的句柄上没有它。所以这条路径在当前版本不可用。
+      // 实测：`SubagentRuntime` 是 `TypertRemoteService`，`start` 没有 `@Remote` 标注，
+      // 插件侧拿到的句柄上没有它。
       return {
         error: route === undefined
-          ? '自动填充需要配置模型：请在装载行写 assistProvider 与 assistModel'
-            + '（当前 DSH 版本的子代理服务不向插件暴露 start()）'
-          : '单次调用失败，且当前版本的子代理服务不向插件暴露 start()，没有可回退的路径',
+          ? '读不到当前对话的模型，也没有配置 assistProvider / assistModel'
+          : '单次调用失败，且当前 DSH 版本的子代理服务不向插件暴露 start()，没有可回退的路径',
         status: 501,
       }
     }
-    const parent = findSession(ctx, sessionId)
+    const parent = findSession(ctx, assistRequest.sessionId)
     if (parent === undefined) return { error: '取不到当前会话，无法启动子代理', status: 409 }
     let providerName: string
     try {
@@ -207,14 +185,14 @@ export async function runAssist(
     }
   }
 
-  const parsed = extractJsonObject(output)
-  if (parsed === undefined) {
+  const parsedOutput = extractJsonObject(output)
+  if (parsedOutput === undefined) {
     // 不猜、不修补：把模型原文截一段回去，让人看见它到底说了什么。
     return { error: `模型没有返回可解析的 JSON：${output.slice(0, 200)}`, status: 502 }
   }
 
   // 校验复用导入那条路径：未知键丢弃、类型不符丢弃、越界枚举改写，问题进 warnings。
-  const { patch, warnings } = parseFormDocument(JSON.stringify(parsed))
+  const { patch, warnings } = parseFormDocument(JSON.stringify(parsedOutput))
   if (Object.keys(patch).length === 0) {
     return {
       error: `模型的输出没有可用字段${warnings.length === 0 ? '' : `（${warnings.join('; ')}）`}`,
