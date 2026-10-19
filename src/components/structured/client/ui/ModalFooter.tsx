@@ -32,8 +32,8 @@ export interface ModalFooterProps {
   onExport: () => void
   /** 点击导入：交给隐藏的 file input。 */
   onImportClick: () => void
-  /** 隐藏的 file input 引用。 */
-  importRef: RefObject<HTMLInputElement>
+  /** 隐藏的 file input 引用（`useRef<T>(null)` 在 React 19 的类型里是 `RefObject<T | null>`）。 */
+  importRef: RefObject<HTMLInputElement | null>
   /** file input 变更回调。 */
   onImportChange: (event: ChangeEvent<HTMLInputElement>) => void
   /** 复制成稿到剪贴板。 */

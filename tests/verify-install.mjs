@@ -32,11 +32,18 @@ const check = (label, ok, detail = '') => {
 const installed = resolve(PROFILE_DIR, 'node_modules', PLUGIN_ID)
 check('profile node_modules 中的插件目录存在', existsSync(installed), installed)
 if (existsSync(installed)) {
-  // 两种安装方式都合法：`link:` 指向本工作区源码，`github:` 是独立副本。
+  // 三种安装方式都合法：`link:` 指向本工作区源码、`github:` 是独立副本、registry 版本号是
+  // npm 包（0.4.1 起发布）。这条断言原来只认前两种 —— 于是正经从 npm 装上来的反而判红。
   const linkedHere = realpathSync(installed) === realpathSync(PLUGIN_ROOT)
   const spec = readProfileDependency()
-  check('依赖指向本插件（link 本目录或 github 源）',
-    linkedHere || spec.startsWith('github:'), spec)
+  const fromRegistry = /^\d+\.\d+\.\d+/.test(spec) || spec.startsWith('^') || spec.startsWith('~')
+  check('依赖指向本插件（link 本目录 / github 源 / npm 版本号）',
+    linkedHere || spec.startsWith('github:') || fromRegistry, spec)
+  // 两种形态要分清：npm 包装成的是独立副本，不是指向源码的 junction —— 后者在 Windows 上
+  // 会让 pnpm 换装时卡在 rename（EPERM）。
+  check('安装形态可辨认（link 指向源码 / registry 是副本）',
+    linkedHere ? spec.startsWith('link:') : true,
+    `linkedHere=${String(linkedHere)} spec=${spec}`)
   check('装到的包含 client 产物', existsSync(join(installed, 'lib', 'client.js')))
   check('装到的包含 host 产物', existsSync(join(installed, 'lib', 'structured.js')))
   check('装到的包不含 node_modules（否则会破坏 pnpm 安装）',
@@ -270,6 +277,36 @@ check('lib/client.js 不早于它对应的源码（已重新构建）',
   clientBundleTime >= clientNewest - MTIME_TOLERANCE_MS,
   `bundle=${new Date(clientBundleTime).toISOString()} newestSrc=${new Date(clientNewest).toISOString()}`
   + `（容差 ${MTIME_TOLERANCE_MS}ms）`)
+
+// ---- npm 发布形态 ----
+//
+// 发出去的包和仓库不是一回事：`src` / `tests` / `tools` 属于仓库、不属于包。这里守两侧 ——
+// 包必须**包含** DSH 加载所需的最小集合（否则装上也是空的），且**不包含**仓库内容。
+const publishedJson = JSON.parse(readFileSync(join(PLUGIN_ROOT, 'package.json'), 'utf8'))
+const publishedFiles = Array.isArray(publishedJson.files) ? publishedJson.files : []
+
+check('package.json 未设置 private（有它 npm publish 直接被拒）',
+  publishedJson.private === undefined, String(publishedJson.private))
+check('files 覆盖 DSH 加载所需（lib / cordis.patch.yml / README.md）',
+  ['lib', 'cordis.patch.yml', 'README.md'].every(need => publishedFiles.includes(need)),
+  JSON.stringify(publishedFiles))
+check('files 不含 src / tests / tools（仓库内容不该进 npm 包）',
+  !['src', 'tests', 'tools'].some(name => publishedFiles.includes(name)),
+  JSON.stringify(publishedFiles))
+check('publishConfig 固定到 npmjs（本机 registry 是只读镜像）',
+  publishedJson.publishConfig?.registry === 'https://registry.npmjs.org',
+  String(publishedJson.publishConfig?.registry))
+check('包身份与三个入口对得上（装载行靠 exports 解析）',
+  publishedJson.name === PLUGIN_ID
+  && publishedJson.main === 'lib/structured.js'
+  && publishedJson.exports?.['./structured']?.default === './lib/structured.js'
+  && publishedJson.exports?.['./library']?.default === './lib/library.js'
+  && publishedJson.exports?.['./client']?.default === './lib/client.js',
+  `${String(publishedJson.name)} / ${String(publishedJson.main)}`)
+check('dsh 字段声明了 bundle patch 与 client 半边（缺一条界面就不加载）',
+  publishedJson.dsh?.bundle?.patch === './cordis.patch.yml'
+  && publishedJson.dsh?.client?.platform === 'web',
+  JSON.stringify(publishedJson.dsh))
 
 if (failures.length > 0) {
   console.error(`\n${failures.length} 项检查未通过：${failures.join('; ')}`)

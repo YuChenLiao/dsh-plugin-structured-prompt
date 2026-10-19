@@ -181,6 +181,27 @@ dsh plugin --profile desktop add link:$PWD
 
 链接方式下**改动 `src/` 后需要重新构建产物**才生效（见下方[开发](#开发)）。
 
+### 从 npm 安装
+
+```powershell
+dsh plugin --profile desktop add dsh-plugin-structured-prompt
+```
+
+三种方式（npm / GitHub / `link:` 本地源码）都支持，装完都要**重启 DSH**。`link:` 与另外两种的区别是：它不是独立副本，而是一个指向源码目录的 junction。
+
+### 切换安装方式之前，先清掉旧条目
+
+在 Windows 上从 `link:` 换成 npm 或 GitHub 时，pnpm 要把 `node_modules/<包名>` 改名成 `_tmp_` 再解包，这一步可能被占用或重解析点卡住：
+
+```
+ERR_PNPM_EPERM  EPERM: operation not permitted, rename
+  '...node_modules\dsh-plugin-structured-prompt_tmp_24100_1' -> '...node_modules\dsh-plugin-structured-prompt'
+```
+
+处理顺序：**关掉 DSH** → 删掉 `node_modules\dsh-plugin-structured-prompt` → 重新 `add`。若 `package.json` 里已经没有这个依赖、`node_modules` 里却还留着那个 junction，也要一并删掉 —— 那是 pnpm 失败回滚后常见的半截状态。
+
+`dsh plugin add` 在"已经装过"时可能不再补写 `dsh.profile.bundles`。装完检查一下这个数组里有 `dsh-plugin-structured-prompt`，没有就手工加上，否则插件不会加载（`tests/verify-install.mjs` 会连同依赖规格一起核对）。
+
 ### 两种方式可以自由切换
 
 ```powershell
