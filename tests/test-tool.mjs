@@ -1660,29 +1660,44 @@ const sessionScope = projectionState => ({
   },
 })
 const modelCtx = projectionState => ({
-  get: name => (name === 'sessions'
-    ? { get: () => ({ append: () => {}, id: 's1' }), scope: () => sessionScope(projectionState) }
-    : undefined),
+  // 新实现按「`sessions.get(id)` 取 Session + `sessionProjections.stateOf` 读投影」走，
+  // 两个服务都要能从这里取到（真机上它们可能只在外层上下文可见，所以被测方会试两个上下文）。
+  get: name => {
+    if (name === 'sessions') {
+      return { get: () => ({ append: () => {}, id: 's1' }), scope: () => sessionScope(projectionState) }
+    }
+    if (name === 'sessionProjections') return sessionScope(projectionState).sessionProjections
+    return undefined
+  },
 })
 
 check('读会话模型：pending 优先（尚未生效的切换）',
   assistModelModule.readSessionModel(
-    modelCtx({ lastUsed: { provider: 'p1', model: 'm1' }, pending: { provider: 'p2', model: 'm2' } }),
+    [modelCtx({ lastUsed: { provider: 'p1', model: 'm1' }, pending: { provider: 'p2', model: 'm2' } })],
     's1',
-  )?.['model'] === 'm2')
+  ).selection?.['model'] === 'm2')
 check('读会话模型：pending 为空时退回 lastUsed',
   assistModelModule.readSessionModel(
-    modelCtx({ lastUsed: { provider: 'p1', model: 'm1' }, pending: null }),
+    [modelCtx({ lastUsed: { provider: 'p1', model: 'm1' }, pending: null })],
     's1',
-  )?.['model'] === 'm1')
-check('读会话模型：形状不全时返回 undefined（不猜默认模型）',
-  assistModelModule.readSessionModel(modelCtx({ lastUsed: { provider: '', model: 'x' } }), 's1') === undefined
-  && assistModelModule.readSessionModel(modelCtx({ lastUsed: null, pending: null }), 's1') === undefined)
+  ).selection?.['model'] === 'm1')
+check('读会话模型：形状不全时不给模型（不猜默认）',
+  assistModelModule.readSessionModel(
+    [modelCtx({ lastUsed: { provider: '', model: 'x' } })], 's1',
+  ).selection === undefined
+  && assistModelModule.readSessionModel(
+    [modelCtx({ lastUsed: null, pending: null })], 's1',
+  ).selection === undefined)
+check('读会话模型：失败时给出卡在哪一步（可诊断，不是只返回 undefined）',
+  typeof assistModelModule.readSessionModel(
+    [modelCtx({ lastUsed: null, pending: null })], 's1',
+  ).reason === 'string'
+  && assistModelModule.readSessionModel([{ get: () => undefined }], 's1').reason.includes('sessions'))
 check('读会话模型：推理强度跟着会话一起带出',
   assistModelModule.readSessionModel(
-    modelCtx({ lastUsed: { provider: 'p1', model: 'm1', reasoningEffort: 'high' } }),
+    [modelCtx({ lastUsed: { provider: 'p1', model: 'm1', reasoningEffort: 'high' } })],
     's1',
-  )?.['reasoningEffort'] === 'high')
+  ).selection?.['reasoningEffort'] === 'high')
 
 // 优先级：会话模型 > 装载行配置。
 const capturedCalls = []

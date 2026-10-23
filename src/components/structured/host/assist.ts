@@ -108,6 +108,7 @@ export async function runAssist(
   ctx: AssistContext,
   request: Request,
   config: StructuredPluginConfig = {},
+  outer?: AssistContext,
 ): Promise<AssistOutcome | AssistFailure> {
   const parsed = await parseAssistRequest(request, { maxBrief: ASSIST_MAX_BRIEF })
   if (!parsed.ok) return parsed.failure
@@ -116,14 +117,21 @@ export async function runAssist(
   const llm = ctx.get?.('llm') as LlmServiceLike | undefined
   const subagents = ctx.get?.('subagents') as SubagentsServiceLike | undefined
   // 模型来源优先级：**当前会话正在用的模型**（"继承当前对话"）→ 装载行配置 → 都没有。
-  const sessionModel = readSessionModel(ctx, assistRequest.sessionId)
+  // 两个上下文都试：本函数拿到的是 `ctx.inject(['connection'], scoped => …)` 的作用域上下文，
+  // 它未必看得到 `sessions` / `sessionProjections` 这类宿主服务，而外层上下文往往看得到。
+  const lookup = readSessionModel(
+    outer === undefined ? [ctx] : [ctx, outer],
+    assistRequest.sessionId,
+  )
+  const sessionModel = lookup.selection
   const route = sessionModel ?? (config.assistProvider === undefined || config.assistModel === undefined
     ? undefined
     : { provider: config.assistProvider, model: config.assistModel })
   if (route === undefined && subagents === undefined) {
+    // 把"卡在哪一步"写进错误消息：只说"读不到模型"没法定位（服务不可见？会话取不到？投影没状态？）。
     return {
-      error: '读不到当前对话的模型，也没有配置 assistProvider / assistModel'
-        + '（通常意味着这个会话还没发过请求，所以还没有模型选择）',
+      error: `读不到当前对话的模型（${lookup.reason ?? '原因未知'}）；`
+        + '也没有配置 assistProvider / assistModel',
       status: 501,
     }
   }
@@ -227,7 +235,7 @@ export function registerAssistRoute(ctx: AssistContext, config: StructuredPlugin
       path: ASSIST_ROUTE_PATH,
       methods: ['POST'],
       async fetch(request: Request) {
-        const result = await runAssist(scoped, request, config)
+        const result = await runAssist(scoped, request, config, ctx)
         return 'error' in result
           ? jsonResponse({ error: result.error }, result.status)
           : jsonResponse(result, 200)

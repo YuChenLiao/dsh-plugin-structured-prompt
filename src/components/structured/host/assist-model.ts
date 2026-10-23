@@ -1,17 +1,22 @@
 /**
- * 读出「当前对话正在用的模型」。
+ * 读出「当前对话正在用的模型」，失败时给出**卡在哪一步**。
  *
- * 自动填充不要求用户配置模型：它**继承当前对话的模型**。DSH 把这件事记在会话投影里
+ * 自动填充不要求用户配置模型：它继承当前对话的模型。DSH 把这件事记在会话投影里
  * （`packages/api/session-controller/src/model-selection-projection.ts`）：
  *
- *  - key 是 `'modelSelection'`，state 形如 `{ lastUsed, pending }`：
- *    - `lastUsed` 来自最近一次 `request/header` 事件的 `config`（**真正用过**的模型）；
- *    - `pending` 是使用者刚切换、尚未生效的选择。
- *  - 所以 `pending ?? lastUsed` = "下一次请求会用的模型"，正合"继承当前对话"的直觉。
+ *  - key 是 `'modelSelection'`，state 形如 `{ lastUsed, pending }`；
+ *  - `lastUsed` 来自最近一次 `request/header` 事件的 config（**真正用过**的模型）；
+ *  - `pending` 是使用者刚切换、尚未生效的选择；
+ *  - 取 `pending ?? lastUsed` = "下一次请求会用的模型"。
  *
- * 读不到就返回 `undefined`，由调用方回退到装载行配置或给出可读错误 —— 这里不猜一个默认模型。
+ * **为什么要传入多个上下文**：本模块的调用方在 HTTP 路由里，手上是一个
+ * `ctx.inject(['connection'], scoped => …)` 的**作用域**上下文。作用域里未必看得到
+ * `sessions` / `sessionProjections` 这类宿主服务，而外层上下文往往看得到。所以两侧都试，
+ * 并且**把失败原因带出去** —— 上一版只返回 `undefined`，界面上只剩一句"读不到模型"，
+ * 无法判断是服务不可见、会话取不到、还是投影还没有状态。
+ *
+ * 读不到就返回原因，由调用方回退到装载行配置或给出可读错误 —— 这里不猜一个默认模型。
  */
-import { findSession } from './assist-input.js'
 
 /** 一次模型选择（`ModelSelection` 的形状，见 `session-controller/src/types.ts` 的 zod schema）。 */
 export interface ModelSelectionLike {
@@ -23,20 +28,36 @@ export interface ModelSelectionLike {
   readonly reasoningEffort?: string
 }
 
+/** 查询结果：要么给出模型，要么给出卡住的原因。 */
+export interface ModelLookup {
+  /** 拿到的模型选择。 */
+  readonly selection?: ModelSelectionLike
+  /** 失败原因（直接进错误消息，便于定位）。 */
+  readonly reason?: string
+}
+
 /** 投影的状态形状（只声明本模块读到的两个字段）。 */
 interface ModelSelectionState {
   readonly lastUsed?: unknown
   readonly pending?: unknown
 }
 
-/** `sessionProjections` 服务里用到的面。 */
-interface ProjectionsLike {
-  readonly stateOf?: (session: unknown, key: string) => unknown
+/** 一个只声明 `get` 的上下文（scoped 与外层都是这个形状）。 */
+export interface LookupContext {
+  /** 按服务名取。 */
+  readonly get?: (name: string) => unknown
 }
 
-/** 会话服务的面（只需要 `scope`：作用域上下文上可能挂着投影服务）。 */
+/** `sessions` 服务里用到的面。 */
 interface SessionsLike {
-  readonly scope?: (id: string) => Record<string, unknown> | undefined
+  /** 按 id 取 Session（DSH 自己在 `session-controller/src/agent.ts:189` 就这么用）。 */
+  readonly get?: (id: string) => unknown
+}
+
+/** `sessionProjections` 服务里用到的面。 */
+interface ProjectionsLike {
+  /** 取某个会话的某个投影状态。 */
+  readonly stateOf?: (session: unknown, key: string) => unknown
 }
 
 /**
@@ -60,37 +81,64 @@ function narrowSelection(value: unknown): ModelSelectionLike | undefined {
 }
 
 /**
- * 从会话投影里读出当前模型。
- *
- * 两条取投影的路径都试（作用域上下文 / 全局上下文）—— 不同组装里服务的可见范围不同，
- * 而这一步失败只会降级到配置，不会让功能不可用。
- * @param ctx - host 上下文。
- * @param sessionId - 目标会话。
- * @returns 当前会话的模型；读不到时为 `undefined`。
+ * 依次在多个上下文里找一个服务。
+ * @param contexts - 上下文（作用域在前、外层在后）。
+ * @param name - 服务名。
+ * @returns 第一个非空的服务；都没有则为 `undefined`。
  */
-export function readSessionModel(
-  ctx: { readonly get?: (name: string) => unknown },
-  sessionId: string,
-): ModelSelectionLike | undefined {
-  const session = findSession(ctx, sessionId)
-  if (session === undefined) return undefined
-
-  const sessions = ctx.get?.('sessions') as SessionsLike | undefined
-  const scoped = sessions?.scope?.(sessionId)
-  const candidates: unknown[] = [
-    (scoped?.['get'] as ((name: string) => unknown) | undefined)?.call(scoped, 'sessionProjections'),
-    ctx.get?.('sessionProjections'),
-    scoped?.['sessionProjections'],
-  ]
-  for (const candidate of candidates) {
-    if (typeof candidate !== 'object' || candidate === null) continue
-    const stateOf = (candidate as ProjectionsLike).stateOf
-    if (typeof stateOf !== 'function') continue
-    const state = stateOf.call(candidate, session, 'modelSelection') as ModelSelectionState | undefined
-    if (typeof state !== 'object' || state === null) continue
-    // `pending` 优先：那是"下一次请求会用到的"选择。
-    const picked = narrowSelection(state.pending) ?? narrowSelection(state.lastUsed)
-    if (picked !== undefined) return picked
+function firstService(contexts: readonly LookupContext[], name: string): unknown {
+  for (const context of contexts) {
+    const value = context.get?.(name)
+    if (value !== undefined && value !== null) return value
   }
   return undefined
+}
+
+/**
+ * 从会话投影里读出当前模型。
+ * @param contexts - 上下文列表（作用域上下文与外层上下文；顺序即优先级）。
+ * @param sessionId - 目标会话。
+ * @returns 模型选择，或卡住的原因。
+ */
+export function readSessionModel(
+  contexts: readonly LookupContext[],
+  sessionId: string,
+): ModelLookup {
+  // 兼容直接传单个上下文（运行期宽松，类型仍要求数组）。
+  const list = Array.isArray(contexts) ? contexts : [contexts as LookupContext]
+  const live = list.filter(context => context !== undefined && context !== null)
+
+  const sessions = firstService(live, 'sessions') as SessionsLike | undefined
+  if (sessions === undefined) return { reason: '拿不到 sessions 服务' }
+  const getSession = sessions.get
+  if (typeof getSession !== 'function') return { reason: 'sessions 服务没有 get(id)' }
+  const session = getSession.call(sessions, sessionId)
+  if (typeof session !== 'object' || session === null) {
+    return { reason: `sessions.get('${sessionId}') 没有返回会话（这个会话可能已结束）` }
+  }
+
+  let projections = firstService(live, 'sessionProjections') as ProjectionsLike | undefined
+  if (projections === undefined) {
+    // 兜底：投影服务可能只挂在会话作用域上（`sessions.scope(id)` 的返回值里）。真机与假上下文
+    // 都可能只暴露这一条路径，所以两条都试 —— 少了它，整条链路会静默退化成"读不到模型"。
+    const attachScope = (sessions as { scope?: unknown }).scope
+    if (typeof attachScope === 'function') {
+      const scope = (attachScope as (id: string) => Record<string, unknown> | undefined).call(sessions, sessionId)
+      const attached = scope?.['sessionProjections']
+      if (typeof attached === 'object' && attached !== null) projections = attached as ProjectionsLike
+    }
+  }
+  if (projections === undefined) return { reason: '拿不到 sessionProjections 服务' }
+  const stateOf = projections.stateOf
+  if (typeof stateOf !== 'function') return { reason: 'sessionProjections 服务没有 stateOf(session, key)' }
+
+  const state = stateOf.call(projections, session, 'modelSelection') as ModelSelectionState | undefined
+  if (typeof state !== 'object' || state === null) {
+    // 投影是懒建的：这个会话还没成功发出过一次请求时，它还没有状态。
+    return { reason: '这个会话还没有模型选择（先在本会话里发一条消息，让它跑过一轮请求）' }
+  }
+  const picked = narrowSelection(state.pending) ?? narrowSelection(state.lastUsed)
+  return picked === undefined
+    ? { reason: '投影里没有可用的 provider / model' }
+    : { selection: picked }
 }
