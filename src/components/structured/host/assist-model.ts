@@ -95,6 +95,18 @@ function firstService(contexts: readonly LookupContext[], name: string): unknown
 }
 
 /**
+ * 把会话标识截短，用于错误消息。
+ *
+ * sessionId 是内部标识，但它会随错误消息显示在界面上、也可能被截图带出去 —— 只留前 8 位足够
+ * 定位到会话，又不至于把整串标识摊开。
+ * @param id - 完整标识。
+ * @returns 截短后的标识。
+ */
+function shortId(id: string): string {
+  return id.length <= 10 ? id : `${id.slice(0, 8)}…`
+}
+
+/**
  * 从会话投影里读出当前模型。
  * @param contexts - 上下文列表（作用域上下文与外层上下文；顺序即优先级）。
  * @param sessionId - 目标会话。
@@ -114,7 +126,7 @@ export function readSessionModel(
   if (typeof getSession !== 'function') return { reason: 'sessions 服务没有 get(id)' }
   const session = getSession.call(sessions, sessionId)
   if (typeof session !== 'object' || session === null) {
-    return { reason: `sessions.get('${sessionId}') 没有返回会话（这个会话可能已结束）` }
+    return { reason: `sessions.get('${shortId(sessionId)}') 没有返回会话（这个会话可能已结束）` }
   }
 
   let projections = firstService(live, 'sessionProjections') as ProjectionsLike | undefined
@@ -132,7 +144,15 @@ export function readSessionModel(
   const stateOf = projections.stateOf
   if (typeof stateOf !== 'function') return { reason: 'sessionProjections 服务没有 stateOf(session, key)' }
 
-  const state = stateOf.call(projections, session, 'modelSelection') as ModelSelectionState | undefined
+  // stateOf 是宿主实现，可能抛（投影实现变更、会话归属校验等）。这里兜住并转成可读原因 ——
+  // 否则异常会一路冒到路由 handler，界面上只剩 500。
+  let state: ModelSelectionState | undefined
+  try {
+    state = stateOf.call(projections, session, 'modelSelection') as ModelSelectionState | undefined
+  } catch (error) {
+    const detail = (error instanceof Error ? error.message : String(error)).slice(0, 120)
+    return { reason: `读取会话投影时出错（${detail}）` }
+  }
   if (typeof state !== 'object' || state === null) {
     // 投影是懒建的：这个会话还没成功发出过一次请求时，它还没有状态。
     return { reason: '这个会话还没有模型选择（先在本会话里发一条消息，让它跑过一轮请求）' }

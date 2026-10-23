@@ -1693,11 +1693,46 @@ check('读会话模型：失败时给出卡在哪一步（可诊断，不是只�
     [modelCtx({ lastUsed: null, pending: null })], 's1',
   ).reason === 'string'
   && assistModelModule.readSessionModel([{ get: () => undefined }], 's1').reason.includes('sessions'))
-check('读会话模型：推理强度跟着会话一起带出',
-  assistModelModule.readSessionModel(
+check('读会话模型：推理强度跟着会话一起带出', assistModelModule.readSessionModel(
     [modelCtx({ lastUsed: { provider: 'p1', model: 'm1', reasoningEffort: 'high' } })],
     's1',
   ).selection?.['reasoningEffort'] === 'high')
+
+// 下面四条守的是审查实测「删掉也不会有断言变红」的分支。
+check('读会话模型：投影只挂在 scope 上时也能读到（兜底分支不是死代码）', (() => {
+  const scopeOnly = {
+    get: name => (name === 'sessions'
+      ? {
+        get: () => ({ append: () => {}, id: 's1' }),
+        scope: () => sessionScope({ lastUsed: { provider: 'p', model: 'm' } }),
+      }
+      : undefined),
+  }
+  return assistModelModule.readSessionModel([scopeOnly], 's1').selection?.['model'] === 'm'
+})())
+check('读会话模型：兼容直接传单个上下文（旧调用方）',
+  assistModelModule.readSessionModel(
+    modelCtx({ lastUsed: { provider: 'p2', model: 'm2' } }), 's1',
+  ).selection?.['model'] === 'm2')
+check('读会话模型：投影读取抛错时给出可读原因，不让异常冒成 500', (() => {
+  const throwing = {
+    get: name => {
+      if (name === 'sessions') return { get: () => ({ append: () => {}, id: 's1' }) }
+      if (name === 'sessionProjections') return { stateOf: () => { throw new Error('boom') } }
+      return undefined
+    },
+  }
+  const out = assistModelModule.readSessionModel([throwing], 's1')
+  return out.selection === undefined && typeof out.reason === 'string' && out.reason.includes('boom')
+})())
+check('读会话模型：原因里的会话标识被截断（不把完整 id 带到界面）', (() => {
+  const longId = 'sess-9f3a2b7c-1234-5678-9abc-def012345678'
+  const out = assistModelModule.readSessionModel(
+    [{ get: name => (name === 'sessions' ? { get: () => undefined } : undefined) }], longId,
+  )
+  return typeof out.reason === 'string'
+    && !out.reason.includes(longId) && out.reason.includes('…')
+})())
 
 // 优先级：会话模型 > 装载行配置。
 const capturedCalls = []
