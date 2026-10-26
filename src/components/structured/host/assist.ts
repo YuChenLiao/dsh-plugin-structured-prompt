@@ -27,7 +27,7 @@ import { buildAssistPrompt } from './assist-prompt.js'
 import { buildConvertPrompt } from './assist-convert-prompt.js'
 import { extractJsonObject, findSession, parseAssistRequest } from './assist-input.js'
 import type { AssistRequest } from './assist-input.js'
-import { readSessionModel } from './assist-model.js'
+import { readDefaultModel, readSessionModel } from './assist-model.js'
 import { resolveProviderName, runForeground } from './subagents.js'
 import type { SubagentsServiceLike } from './subagents.js'
 
@@ -116,21 +116,26 @@ export async function runAssist(
 
   const llm = ctx.get?.('llm') as LlmServiceLike | undefined
   const subagents = ctx.get?.('subagents') as SubagentsServiceLike | undefined
-  // 模型来源优先级：**当前会话正在用的模型**（"继承当前对话"）→ 装载行配置 → 都没有。
+  // 模型来源优先级：**当前会话正在用的模型** → **宿主的默认模型** → 装载行配置 → 都没有。
+  //
   // 两个上下文都试：本函数拿到的是 `ctx.inject(['connection'], scoped => …)` 的作用域上下文，
   // 它未必看得到 `sessions` / `sessionProjections` 这类宿主服务，而外层上下文往往看得到。
-  const lookup = readSessionModel(
-    outer === undefined ? [ctx] : [ctx, outer],
-    assistRequest.sessionId,
-  )
-  const sessionModel = lookup.selection
+  //
+  // 中间那一级是必需的：**新会话还没有模型选择**（用户没切换过、也还没发过请求），`modelSelection`
+  // 投影的 `lastUsed` 与 `pending` 都是 null。DSH 自己的回退链是
+  // `pending → 会话 requestHeader → agentDefaultModel`，这里对齐它的最后一级。
+  const contexts = outer === undefined ? [ctx] : [ctx, outer]
+  const lookup = readSessionModel(contexts, assistRequest.sessionId)
+  const fallbackLookup = lookup.selection === undefined ? readDefaultModel(contexts) : undefined
+  const sessionModel = lookup.selection ?? fallbackLookup?.selection
   const route = sessionModel ?? (config.assistProvider === undefined || config.assistModel === undefined
     ? undefined
     : { provider: config.assistProvider, model: config.assistModel })
   if (route === undefined && subagents === undefined) {
-    // 把"卡在哪一步"写进错误消息：只说"读不到模型"没法定位（服务不可见？会话取不到？投影没状态？）。
+    // 把"卡在哪一步"写进错误消息：只说"读不到模型"没法定位。
     return {
-      error: `读不到当前对话的模型（${lookup.reason ?? '原因未知'}）；`
+      error: `读不到可用的模型（会话模型：${lookup.reason ?? '已取到'}；`
+        + `默认模型：${fallbackLookup?.reason ?? (lookup.selection === undefined ? '未尝试' : '已取到')}）；`
         + '也没有配置 assistProvider / assistModel',
       status: 501,
     }

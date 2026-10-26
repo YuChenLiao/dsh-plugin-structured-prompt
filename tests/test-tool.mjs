@@ -1734,6 +1734,63 @@ check('读会话模型：原因里的会话标识被截断（不把完整 id 带
     && !out.reason.includes(longId) && out.reason.includes('…')
 })())
 
+// ---- 12b) 新会话：会话里还没有模型选择，回退到宿主默认模型 ----
+//
+// 「对话刚开始点自动填充」那个真机 bug 的回归守护：新会话没切换过模型、也没发过请求，
+// `modelSelection` 投影的 lastUsed/pending 都是 null —— DSH 自己的回退链最后一级是
+// `agentDefaultModel`（`session-controller/src/agent.ts:283-291`），我们必须对齐它。
+
+check('读默认模型：从 agentDefaultModel.currentSelection() 取到', (() => {
+  const withDefault = {
+    get: name => (name === 'agentDefaultModel'
+      ? { currentSelection: () => ({ provider: 'dp', model: 'dm' }) }
+      : undefined),
+  }
+  return assistModelModule.readDefaultModel([withDefault]).selection?.['model'] === 'dm'
+})())
+check('读默认模型：服务不在或形状不符时给出原因', (() => {
+  const missing = assistModelModule.readDefaultModel([{ get: () => undefined }])
+  const noMethod = assistModelModule.readDefaultModel([{
+    get: name => (name === 'agentDefaultModel' ? { other: 1 } : undefined),
+  }])
+  return typeof missing.reason === 'string' && missing.reason.includes('agentDefaultModel')
+    && typeof noMethod.reason === 'string'
+})())
+
+const freshCalls = []
+const freshLlm = {
+  stream(options) {
+    freshCalls.push(options)
+    return (async function* generate() {
+      yield { type: 'text-delta', text: '{"role":"新会话也能填"}' }
+    })()
+  },
+}
+const freshRun = await assistModule.runAssist(
+  {
+    get: name => {
+      if (name === 'llm') return freshLlm
+      if (name === 'sessions') return { get: () => ({ append: () => {}, id: 's1' }) }
+      // 新会话：投影存在但没有任何选择
+      if (name === 'sessionProjections') return { stateOf: () => ({ lastUsed: null, pending: null }) }
+      if (name === 'agentDefaultModel') {
+        return { currentSelection: () => ({ provider: 'defaultProv', model: 'defaultModel' }) }
+      }
+      return undefined
+    },
+  },
+  new Request('http://x/', {
+    method: 'POST',
+    body: JSON.stringify({ brief: '做个审查', sessionId: 's1' }),
+  }),
+)
+check('主链：新会话没有模型选择时回退到默认模型（对话刚开始也能自动填充）',
+  'patch' in freshRun
+  && freshRun.patch['role'] === '新会话也能填'
+  && freshCalls[0]?.['provider'] === 'defaultProv'
+  && freshCalls[0]?.['model'] === 'defaultModel',
+  JSON.stringify({ provider: freshCalls[0]?.provider, model: freshCalls[0]?.model }))
+
 // 优先级：会话模型 > 装载行配置。
 const capturedCalls = []
 const recordLlm = {

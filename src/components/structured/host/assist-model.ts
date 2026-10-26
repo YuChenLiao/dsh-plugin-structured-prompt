@@ -162,3 +162,35 @@ export function readSessionModel(
     ? { reason: '投影里没有可用的 provider / model' }
     : { selection: picked }
 }
+
+/**
+ * 读出**宿主的默认模型**（`agentDefaultModel.currentSelection()`）。
+ *
+ * 为什么需要它：**新会话还没有模型选择** —— 用户没切换过、也还没发过请求，`modelSelection`
+ * 投影的 `lastUsed` 与 `pending` 都是 `null`。DSH 自己的回退链是
+ * `pending → 会话的 requestHeader → agentDefaultModel`（`session-controller/src/agent.ts:283-291`），
+ * 这里对齐它的最后一级，于是"刚开一个对话就点自动填充"也能用。
+ * @param contexts - 上下文列表（作用域在前、外层在后）。
+ * @returns 默认模型，或卡住的原因。
+ */
+export function readDefaultModel(contexts: readonly LookupContext[]): ModelLookup {
+  const live = (Array.isArray(contexts) ? contexts : [contexts as LookupContext])
+    .filter(context => context !== undefined && context !== null)
+  const service = firstService(live, 'agentDefaultModel') as
+    { readonly currentSelection?: () => unknown } | undefined
+  if (service === undefined) return { reason: '拿不到 agentDefaultModel 服务' }
+  const current = service.currentSelection
+  if (typeof current !== 'function') return { reason: 'agentDefaultModel 服务没有 currentSelection()' }
+
+  let value: unknown
+  try {
+    value = current.call(service)
+  } catch (error) {
+    const detail = (error instanceof Error ? error.message : String(error)).slice(0, 120)
+    return { reason: `读取默认模型时出错（${detail}）` }
+  }
+  const picked = narrowSelection(value)
+  return picked === undefined
+    ? { reason: '默认模型里没有可用的 provider / model' }
+    : { selection: picked }
+}
