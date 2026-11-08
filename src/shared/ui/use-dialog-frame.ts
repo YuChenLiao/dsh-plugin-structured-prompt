@@ -59,12 +59,21 @@ const NARROW_TOLERANCE_PX = 8
  */
 function findColumn(start: HTMLElement): HTMLElement {
   const viewport = window.innerWidth
+  // 取**最宽的**那个「比视口窄」的祖先，而不是第一个命中的。
+  //
+  // 为什么：槽位容器可能被渲染在某个局部容器里（工具栏、某个浮层），而"比视口窄"这个条件它们
+  // 全都满足 —— 只看第一个命中的，遮罩就会贴着那个小容器（实测现象是弹窗跑到窗口右侧）。
+  // 越往上越宽，所以"最宽的窄祖先"必然最接近真正的对话列。
+  let widest: HTMLElement | null = null
   let node: HTMLElement | null = start
   while (node !== null && node !== document.body) {
-    if (node.clientWidth > 0 && node.clientWidth < viewport - NARROW_TOLERANCE_PX) return node
+    const width = node.clientWidth
+    if (width > 0 && width < viewport - NARROW_TOLERANCE_PX) {
+      if (widest === null || width > widest.clientWidth) widest = node
+    }
     node = node.parentElement
   }
-  return start
+  return widest ?? start
 }
 
 /**
@@ -94,4 +103,18 @@ export function useDialogFrame<T extends HTMLElement>(ref: RefObject<T | null>):
     }
   }, [ref])
   return frame
+}
+
+/**
+ * 把定位样式压成一个可读的锚点值，挂在遮罩的 `data-dsh-prompt-frame` 上。
+ *
+ * 真实布局离线测不了，所以出问题时需要一眼看出"到底按哪一列、算成了多少"。空对象表示退回整视口
+ * 居中；否则给出实际使用的 `left` 与 `width`，截图就能带上这两个数。
+ * @param style - `useDialogFrame` 返回的样式。
+ * @returns `viewport` 或 `column:<left>/<width>`。
+ */
+export function frameAnchor(style: CSSProperties): string {
+  if (Object.keys(style).length === 0) return 'viewport'
+  const record = style as Record<string, unknown>
+  return `column:${String(record['left'])}/${String(record['width'])}`
 }

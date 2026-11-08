@@ -27,7 +27,7 @@ import { parseFormDocument, serializeForm } from '../../shared/forms.js'
 import { buildSystemPromptSections, renderPrompt, validateForm } from '../../shared/prompt.js'
 // 样式在 CSS Modules 里（构建期 hash 化 + 自动注入），组件只引用类名。
 import s from '../../../../shared/ui/panel.module.css'
-import { useDialogFrame } from '../../../../shared/ui/use-dialog-frame.js'
+import { frameAnchor, useDialogFrame } from '../../../../shared/ui/use-dialog-frame.js'
 
 /** 提示的展示时长（ms）。 */
 const COPY_HINT_MS = 1800
@@ -170,7 +170,7 @@ export function StructuredPromptModal({
       data-dsh-prompt-mask=""
       // 自证锚点：`column` = 定位已按那一列生效；`viewport` = 退回整视口居中。
       // 真实布局离线测不了，出问题时用它一眼区分"没生效"与"生效了但期望不同"。
-      data-dsh-prompt-frame={Object.keys(dialogFrame).length === 0 ? 'viewport' : 'column'}
+      data-dsh-prompt-frame={frameAnchor(dialogFrame)}
       className={s.mask}
       style={dialogFrame}
       role="presentation"

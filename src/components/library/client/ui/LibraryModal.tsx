@@ -19,7 +19,7 @@ import { copyText } from '../../../../shared/ui/clipboard.js'
 import { fetchLibraryDetail, searchLibrary, searchPatch } from '../library.js'
 import { LibraryList } from './LibraryList.js'
 import s from '../../../../shared/ui/panel.module.css'
-import { useDialogFrame } from '../../../../shared/ui/use-dialog-frame.js'
+import { frameAnchor, useDialogFrame } from '../../../../shared/ui/use-dialog-frame.js'
 import { requestAssist } from '../../../structured/client/assist.js'
 import { offerFormPatch } from '../../../../shared/assist-bridge.js'
 
@@ -173,7 +173,7 @@ export function LibraryModal({
       ref={maskRef}
       data-dsh-prompt-mask=""
       // 自证锚点：`column` = 定位已按那一列生效；`viewport` = 退回整视口居中。
-      data-dsh-prompt-frame={Object.keys(dialogFrame).length === 0 ? 'viewport' : 'column'}
+      data-dsh-prompt-frame={frameAnchor(dialogFrame)}
       className={s.mask}
       style={dialogFrame}
       role="presentation"
