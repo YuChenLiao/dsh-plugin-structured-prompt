@@ -19,7 +19,12 @@ function clone(value) {
 export function defineStore(decl) {
   return {
     spec: decl,
-    create() {
+    /**
+     * 造一个实例。
+     * @param scopeKey - 作用域键；**回传**给实例，测试据此断言"scope 真传下去了"
+     *   （只比"同一 key 同一实例"抓不到"传错 scope"）。
+     */
+    create(scopeKey) {
       let state = decl.init()
       const listeners = new Set()
       const actions = {}
@@ -33,6 +38,7 @@ export function defineStore(decl) {
         }
       }
       return {
+        scopeKey,
         actions,
         getSnapshot: () => state,
         subscribe: (listener) => {

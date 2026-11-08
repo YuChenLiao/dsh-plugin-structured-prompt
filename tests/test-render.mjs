@@ -378,8 +378,8 @@ instance.actions.setField('outputFormat', '')
  * 渲染面板并保证渲染成功。
  * @returns 成功时的 HTML；渲染抛错时给出带标记的文本，使两类断言都变红。
  */
-const okHtml = () => {
-  const out = panel()
+const okHtml = (extra = {}) => {
+  const out = panel(extra)
   return out.error === null ? out.html : `render-failed: ${String(out.error)}`
 }
 const renderFailed = html => html.startsWith('render-failed')
@@ -747,13 +747,314 @@ check('setForm 是整表替换（未给的字段被清空），与 mergeForm 语
 
 // 静态断言：自动填充消费补丁的那一行必须用 mergeForm
 //（审查实测：换回 setForm 八套零红 —— 那正是数据丢失的写法）。
-const panelSource = readFileSync(
-  resolve(CLIENT, '..', 'components', 'structured', 'client', 'ui', 'Panel.tsx'),
+// 两个外壳（弹窗 / 右侧栏 tab）共用 `panel-hooks.ts` 里的同一份逻辑，所以断言指向那里：
+// 只查某个容器等于把"另一个外壳改坏了"漏掉。
+const hooksSource = readFileSync(
+  resolve(CLIENT, '..', 'components', 'structured', 'client', 'ui', 'panel-hooks.ts'),
   'utf8',
 )
-check('自动填充消费补丁用 mergeForm（不是 setForm）',
-  /actions\.mergeForm\(result\.value\.patch\)/.test(panelSource)
-  && !/actions\.setForm\(result\.value\.patch\)/.test(panelSource))
+// 行为化断言：直接调落盘函数，用假 actions 记录它到底调了谁。
+// （早先那条只查源码里有没有 `actions.mergeForm(result.value.patch)` —— 抽一层包装即可零红。）
+const { commitAssistResult, nextAssistSeq, isLatestAssist } = await import(
+  pathToFileURL(resolve(STRUCTURED, 'client', 'ui', 'panel-hooks.ts')).href
+)
+const assistCalls = []
+const fakeActions = {
+  mergeForm: patch => { assistCalls.push(['mergeForm', patch]) },
+  setForm: patch => { assistCalls.push(['setForm', patch]) },
+  setAppliedTemplate: id => { assistCalls.push(['setAppliedTemplate', id]) },
+  patchAssist: patch => { assistCalls.push(['patchAssist', patch]) },
+}
+commitAssistResult(fakeActions, {
+  patch: { background: '只补这一个' }, warnings: ['忽略字段 rules'], provider: 'x', via: 'llm',
+})
+check('扩写结果用 mergeForm 落盘（不是整表替换 setForm）',
+  assistCalls.some(([name]) => name === 'mergeForm')
+  && !assistCalls.some(([name]) => name === 'setForm'),
+  JSON.stringify(assistCalls.map(([name]) => name)))
+check('扩写结果清掉套用标记并写成功状态（带告警条数）',
+  assistCalls.some(([name, value]) => name === 'setAppliedTemplate' && value === '')
+  && assistCalls.some(([name, value]) => name === 'patchAssist'
+    && value.status === 'done' && value.error === '' && value.warnings.length === 1),
+  JSON.stringify(assistCalls))
+check('扩写确实经由 commitAssistResult（接线没被绕过）',
+  /commitAssistResult\(actions, result\.value\)/.test(hooksSource))
+
+// 序号守卫必须按**会话**记：弹窗与侧栏 tab 可同时挂载，各自一个 ref 就等于两个发起者互不知情。
+const seq1 = nextAssistSeq('sess-a')
+const seq2 = nextAssistSeq('sess-a')
+check('扩写序号按会话递增，旧序号被判为过期',
+  seq2 === seq1 + 1 && isLatestAssist('sess-a', seq2) && !isLatestAssist('sess-a', seq1))
+check('扩写序号按会话隔离（另一个会话从头计数）', nextAssistSeq('sess-b') === 1)
+// 正向钉依赖（负向正则会被一行注释打红：在 Panel.tsx 里写 "不再直接调用 requestAssist()" 就红）。
+const srcOf = name => readFileSync(resolve(STRUCTURED, 'client', 'ui', name), 'utf8')
+const usesRunner = src => /import\s*\{[^}]*useAssistRunner[^}]*\}\s*from\s*'\.\/panel-hooks\.js'/.test(src)
+check('两个外壳都从 panel-hooks 取扩写逻辑（不是各自实现）',
+  usesRunner(srcOf('Panel.tsx')) && usesRunner(srcOf('SidebarForm.tsx')))
+
+// ---- 13) 右侧栏 tab 外壳 ----
+//
+// tab 模式的意义是"不再测量、不再遮罩"：表单本体由宿主给的那块地方撑开。这一节守三件事 ——
+// 不出现遮罩、不出现重复的关闭按钮（侧栏有自己的 ×）、页面里有可断言的面板锚点。
+// 另外守"降级不静默"：宿主没有 tab 能力时，弹窗顶部必须写明原因。
+
+const { StructuredSidebarForm } = await import(
+  pathToFileURL(resolve(STRUCTURED, 'client', 'ui', 'SidebarForm.tsx')).href
+)
+/** tab 主体的座位：`send` 来自注册的 inject 面。 */
+const sendTo = (sessionId, prompt) => { sent.push({ sessionId, prompt }) }
+const sidebarPropsFor = extra => ({
+  useStore: selector => selector(instance.getSnapshot()),
+  actions: instance.actions,
+  send: sendTo,
+  sessionId: 'session-test',
+  ...extra,
+})
+const tabBody = extra => render(createElement(StructuredSidebarForm, sidebarPropsFor(extra)))
+/** 渲染一次 tab 外壳，返回 HTML（渲染抛错时返回一个可被 `renderFailed` 识别的串）。 */
+const tabHtmlOf = extra => {
+  const result = tabBody(extra)
+  return result.error === null ? result.html : `render-failed: ${String(result.error)}`
+}
+
+instance.actions.open()
+const tabHtml = tabHtmlOf({})
+check('tab 外壳可渲染', !renderFailed(tabHtml), tabHtml.slice(0, 200))
+check('tab 外壳没有遮罩（位置与尺寸交给宿主）',
+  !renderFailed(tabHtml) && !tabHtml.includes('data-dsh-prompt-mask'))
+check('tab 外壳不出重复的关闭按钮（关闭手势在 tab 上）',
+  !renderFailed(tabHtml) && !tabHtml.includes('aria-label="关闭"'))
+check('tab 外壳仍渲染同一份表单（面板锚点 + 四个分组）',
+  !renderFailed(tabHtml)
+  && tabHtml.includes('data-dsh-prompt-panel')
+  && ['基础信息', '约束与规则', '工具策略', '输出与兜底'].every(title => tabHtml.includes(title)))
+check('tab 外壳不读 active（tab 存在即已打开）', (() => {
+  instance.actions.close()
+  const closed = tabHtmlOf({})
+  const ok = !renderFailed(closed) && closed.includes('data-dsh-prompt-panel')
+  instance.actions.open()
+  return ok
+})())
+check('没有会话时 tab 外壳不渲染', (() => {
+  const blank = tabHtmlOf({ sessionId: undefined })
+  return !renderFailed(blank) && blank === ''
+})(), tabHtmlOf({ sessionId: undefined }))
+// 发送走 tab 自己的会话，不串到别的会话去。
+instance.actions.setField('role', 'tab 身份')
+instance.actions.setField('goal', 'tab 目标')
+check('tab 外壳底部仍有发送按钮', /<button[^>]*>发送<\/button>/.test(tabHtmlOf({})))
+// 侧栏那边没有 `.modal` 的尺寸：面板必须自己撑满宿主给的高度，否则内容区不滚动、整页在滚。
+// （弹窗里父级高度是 auto，百分比退回 content，不受这条影响。）
+const panelRule = ruleOf('panel')
+check('面板撑满宿主给的高度且可收缩（内容区才是唯一滚动容器）',
+  /height:\s*100%/.test(panelRule) && /min-height:\s*0/.test(panelRule)
+  && /(^|;)\s*(flex|flex-grow)\s*:/.test(panelRule),
+  panelRule)
+
+// 降级说明：宿主没有 `sidebarRightTabs` 时，弹窗顶部要写明原因（否则用户以为侧栏坏了）。
+// 它是**函数**而不是字符串：原因取决于"刚才那次点击的结果"，静态值只能表达 apply 期的猜测。
+instance.actions.open()
+const degraded = okHtml({ degradeNote: () => '宿主未提供右侧栏 tab 能力（sidebarRightTabs），表单以弹窗打开。' })
+check('弹窗显示降级说明（带 data-degrade-note 锚点）',
+  !renderFailed(degraded)
+  && degraded.includes('data-degrade-note')
+  && degraded.includes('sidebarRightTabs'))
+check('接通时不显示降级说明（函数返回 undefined）',
+  !okHtml({ degradeNote: () => undefined }).includes('data-degrade-note'))
+check('有 tab 通路时不显示降级说明', !modal.html.includes('data-degrade-note'))
+
+// 入口按钮：有 tab 通路时不再自称弹出层（aria-haspopup / aria-expanded 只属于弹窗）。
+const triggerWired = (() => {
+  const out = trigger({ open: () => true })
+  return out.error === null ? out.html : `render-failed: ${String(out.error)}`
+})()
+check('入口在 tab 模式下不再声明 aria-haspopup（不是弹出层）',
+  !renderFailed(triggerWired) && !triggerWired.includes('aria-haspopup'))
+check('入口在弹窗模式下仍声明 aria-haspopup', triggerOff.html.includes('aria-haspopup="dialog"'))
+
+// ---- 14) dsh-better-sidebar 的 tab 主体 ----
+//
+// 它**不是插槽组件**，拿不到 `useStore` 座位，只能自己 `handle.create(sessionId)`。而
+// `defineStore.create` 刻意不去重，所以句柄必须按 scopeKey 缓存实例 —— 否则侧栏 tab 与入口
+// 按钮各拿一份状态：侧栏里改了表单、弹窗里看不到，「库 → 表单」的补丁也会落进没人显示的那份。
+
+const { StructuredBetterTab } = await import(
+  pathToFileURL(resolve(STRUCTURED, 'client', 'ui', 'BetterTab.tsx')).href
+)
+
+check('store 句柄按 scopeKey 缓存实例（同一 key 同一实例，不同 key 不同实例）',
+  store.create('scope-a') === store.create('scope-a')
+  && store.create('scope-a') !== store.create('scope-b'))
+
+/**
+ * 渲染一次 better-sidebar 的 tab 主体。
+ * @param extra - 覆盖 props。
+ * @returns HTML，或带标记的失败串。
+ */
+const betterHtmlOf = (extra = {}) => {
+  const out = render(createElement(StructuredBetterTab, {
+    store,
+    send: (sessionId, prompt) => { sent.push({ sessionId, prompt }) },
+    sessionId: 'session-test',
+    ...extra,
+  }))
+  return out.error === null ? out.html : `render-failed: ${String(out.error)}`
+}
+
+instance.actions.open()
+instance.actions.setField('role', '共享的身份')
+instance.actions.setField('goal', '共享的目标')
+const betterTabHtml = betterHtmlOf({})
+check('better-sidebar 的 tab 主体可渲染', !renderFailed(betterTabHtml), betterTabHtml.slice(0, 200))
+check('它与插槽侧共用同一份状态（预览里出现插槽刚写的字段）',
+  !renderFailed(betterTabHtml)
+  && betterTabHtml.includes('# 身份')
+  && betterTabHtml.includes('共享的身份'),
+  betterTabHtml.slice(0, 300))
+check('它渲染同一份表单（无遮罩、无重复关闭按钮）',
+  !renderFailed(betterTabHtml)
+  && betterTabHtml.includes('data-dsh-prompt-panel')
+  && !betterTabHtml.includes('data-dsh-prompt-mask')
+  && !betterTabHtml.includes('aria-label="关闭"'))
+// 活订阅：第二次渲染要读到第一次之后写进去的新值（一次性快照读不到）。
+instance.actions.setField('role', '第二次写入')
+const betterTabAgain = betterHtmlOf({})
+check('better-sidebar 的 tab 主体是活订阅（第二次渲染读到新值）',
+  !renderFailed(betterTabAgain) && betterTabAgain.includes('第二次写入'),
+  betterTabAgain.slice(0, 200))
+check('better-sidebar 的 tab 主体没有另造实例（仍是同一份 store 实例）',
+  store.create('session-test') === instance)
+
+check('没有会话时 better-sidebar 的 tab 主体不渲染',
+  (() => {
+    const blank = betterHtmlOf({ sessionId: undefined })
+    return !renderFailed(blank) && blank === ''
+  })(), betterHtmlOf({ sessionId: undefined }))
+
+// ---- 15) 入口 / 副作用 / scope：现有断言漏掉的路径 ----
+//
+// 这一节每条都对应一次"改坏了仍然全绿"的实测（审查 B 用注入式突变验过）：
+//  - 入口丢会话、忽略 open() 的返回值、成功后不关弹窗；
+//  - 无会话时弹窗容器还渲染；
+//  - 扩写的三条守卫（进行中 / 空需求 / 慢响应）只在 hook 里，SSR 点不到按钮；
+//  - store 传错 scope（"同一 key 同一实例"抓不到）；
+//  - tab 外壳把成稿发进空会话。
+// 入口与 tab 外壳现在都不含真正的 React hook（`useAssistRunner` 是纯函数），所以可以直接调用
+// 组件函数拿到元素，再调用它 props 上的处理器。
+
+instance.actions.close()
+const seenSessions = []
+const wiredTrigger = StructuredInputTrigger(propsFor({ open: (id) => { seenSessions.push(id); return false } }))
+wiredTrigger.props.onClick()
+check('入口把目标会话交给 open（better-sidebar 靠它定位 tab）',
+  seenSessions[0] === 'session-test', JSON.stringify(seenSessions))
+check('open 返回 false 时入口退回弹窗（不是按了没反应）',
+  instance.getSnapshot().active === true)
+instance.actions.close()
+const okTrigger = StructuredInputTrigger(propsFor({ open: () => true }))
+okTrigger.props.onClick()
+check('open 返回 true 时入口关掉弹窗（两份外壳不同屏）',
+  instance.getSnapshot().active === false)
+
+instance.actions.open()
+check('没有会话时弹窗容器不渲染', okHtml({ sessionId: undefined }) === '')
+instance.actions.close()
+
+const { runAssist } = await import(
+  pathToFileURL(resolve(STRUCTURED, 'client', 'ui', 'panel-hooks.ts')).href
+)
+/** 记录动作调用顺序的假 actions。 */
+const makeFakeActions = () => {
+  const events = []
+  return {
+    events,
+    mergeForm: patch => { events.push(['mergeForm', patch]) },
+    setForm: patch => { events.push(['setForm', patch]) },
+    setAppliedTemplate: id => { events.push(['setAppliedTemplate', id]) },
+    patchAssist: patch => { events.push(['patchAssist', patch]) },
+  }
+}
+/** 扩写的最小入参。 */
+const assistOptions = actions => ({
+  form: { role: 'r' },
+  assist: { brief: '写点东西', status: 'idle', error: '', warnings: [] },
+  actions,
+  sessionId: 'sess-x',
+})
+
+// 进行中不再发。
+const busyActions = makeFakeActions()
+let requests = 0
+await runAssist(busyActions, {
+  ...assistOptions(busyActions),
+  assist: { brief: '写点东西', status: 'running', error: '', warnings: [] },
+}, {
+  request: () => { requests += 1; return Promise.resolve({ ok: false, error: '不该发' }) },
+  nextSeq: () => 1,
+  latest: () => true,
+})
+check('进行中再点不发第二次请求', requests === 0 && busyActions.events.length === 0,
+  `requests=${requests} events=${busyActions.events.length}`)
+
+// 空需求不发。
+const emptyActions = makeFakeActions()
+let emptyRequests = 0
+await runAssist(emptyActions, {
+  ...assistOptions(emptyActions),
+  assist: { brief: '   ', status: 'idle', error: '', warnings: [] },
+}, {
+  request: () => { emptyRequests += 1; return Promise.resolve({ ok: false, error: '不该发' }) },
+  nextSeq: () => 1,
+  latest: () => true,
+})
+check('需求为空时不发请求，也不把状态改成进行中',
+  emptyRequests === 0 && emptyActions.events.length === 0,
+  `requests=${emptyRequests} events=${emptyActions.events.length}`)
+
+// 慢响应不得覆盖新的一次。
+const raceActions = makeFakeActions()
+const pending = []
+let counter = 0
+const raceSeams = {
+  request: () => new Promise((settle) => { pending.push(settle) }),
+  nextSeq: () => { counter += 1; return counter },
+  latest: (_sid, mine) => mine === counter,
+}
+const firstRun = runAssist(raceActions, assistOptions(raceActions), raceSeams)
+const secondRun = runAssist(raceActions, assistOptions(raceActions), raceSeams)
+pending[0]?.({ ok: true, value: { patch: { role: '旧结果' }, warnings: [], provider: '', via: 'llm' } })
+await firstRun
+const mergedAfterStale = raceActions.events.filter(([name]) => name === 'mergeForm')
+check('慢响应被丢弃（旧结果不落盘）', mergedAfterStale.length === 0,
+  JSON.stringify(raceActions.events.map(([name]) => name)))
+pending[1]?.({ ok: true, value: { patch: { role: '新结果' }, warnings: ['一条告警'], provider: '', via: 'llm' } })
+await secondRun
+const mergedAfterFresh = raceActions.events.filter(([name]) => name === 'mergeForm')
+check('最新响应落盘（用 mergeForm）',
+  mergedAfterFresh.length === 1 && mergedAfterFresh[0]?.[1]?.role === '新结果',
+  JSON.stringify(mergedAfterFresh))
+
+check('句柄把 scopeKey 原样交给底层实例（只测"同一 key 同一实例"抓不到 scope 传错）',
+  store.create('scope-a').scopeKey === 'scope-a'
+  && store.create('scope-b').scopeKey === 'scope-b'
+  && store.create(undefined).scopeKey === undefined,
+  JSON.stringify([store.create('scope-a').scopeKey, store.create(undefined).scopeKey]))
+check('无会话与空串是同一个 scope（根作用域只有一份实例）',
+  store.create(undefined) === store.create(''))
+
+instance.actions.open()
+const sidebarElement = StructuredSidebarForm(sidebarPropsFor({}))
+sidebarElement.props.onSend('tab 里的成稿')
+check('tab 外壳把成稿发进自己的会话（不是别的会话、也不是空会话）',
+  sent.at(-1)?.sessionId === 'session-test' && sent.at(-1)?.prompt === 'tab 里的成稿',
+  JSON.stringify(sent.at(-1)))
+instance.actions.close()
+
+// SSR 测不到订阅（服务端快照本来就不订阅），只能钉接线：删掉 useSyncExternalStore 会零红。
+check('tab 主体用 useSyncExternalStore 订阅了 store（SSR 只能钉接线）',
+  /useSyncExternalStore\(instance\.subscribe/.test(srcOf('BetterTab.tsx')))
+check('tab 外壳不给表单传 onClose（关闭手势属于 tab，标题栏不画 ×）',
+  !/onClose=/.test(srcOf('SidebarForm.tsx')))
 
 if (failed > 0) {
   console.error(`\n${failed} 项渲染测试未通过。`)

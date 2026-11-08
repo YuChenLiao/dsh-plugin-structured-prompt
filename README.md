@@ -332,6 +332,11 @@ src/components/                       两个组件各自成目录（形态参考
       store.ts                        会话状态（defineStore 动作表）
       actions.ts                      组件侧的动作类型（打断循环引用）
       assist.ts                       自动填充的客户端调用（同源路由，不碰 store）
+      sidebar.ts                      外壳接入链：better-sidebar → 原生右侧栏 → 弹窗
+      sidebar-better.ts               dsh-better-sidebar 后端（注册 tab 类型 / 打开）
+      sidebar-native.ts               宿主原生右侧栏后端（类型注册 / openTab）
+      probe.ts                        服务探测判据（两条后端共用，避免互相 import）
+      sidebar-note.ts                 降级说明文案（把失败阶段翻译成给用户看的一句话）
       ui/AssistRow.tsx                自动填充那一行（输入 + 触发 + 状态）
       assist-task.ts                  任务扩写的客户端调用（回填草稿）
       ui/
@@ -341,10 +346,14 @@ src/components/                       两个组件各自成目录（形态参考
         ToolPairEditor.tsx            工具名 ↔ 用途配对编辑
         Preview.tsx                   提示词预览
         ModalFooter.tsx               底部操作栏
-        Modal.tsx                     弹窗三段结构
-        Panel.tsx                     conversation.input.dock 占用者（表单弹窗）
+        Modal.tsx                     弹窗：遮罩 + 尺寸 + 按列定位（位置逻辑全在这里）
+        FormPanel.tsx                 表单本体（标题栏 + 内容区 + 底栏；弹窗与侧栏共用）
+        Panel.tsx                     conversation.input.dock 占用者（表单弹窗 / 降级外壳）
+        SidebarForm.tsx               宿主原生右侧栏 tab 里的表单（外壳由宿主提供）
+        BetterTab.tsx                 dsh-better-sidebar 的 tab 主体（自己从 store 句柄取实例）
         Trigger.tsx                   conversation.input.left 占用者（入口按钮）
-      TaskTrigger.tsx               conversation.input.left 占用者（任务扩写按钮，无需 store）
+        TaskTrigger.tsx               conversation.input.left 占用者（任务扩写按钮，无需 store）
+        panel-hooks.ts                扩写请求与「库 → 表单」交接（两个外壳共用一份）
         sections/                     四个分组各自的字段
           BasicSection.tsx  RulesSection.tsx  ToolsSection.tsx  OutputSection.tsx
   library/                            提示词库：检索 prompts.chat，宿主代发
@@ -434,15 +443,18 @@ window.__ModuleLoader__.load({ id: 'dsh-plugin-structured-prompt', factory: requ
 
 组件形态参考 dsh-ops：一个包、**多条装载行**，每条有自己的 id、`config` 与 `disabled`，所以两个组件能单独开关、单独配置。`lib/index.js`（聚合入口）把两者一次装完，供"只写一条装载行"的组装使用。
 
-槽位注册因此是**四条**：
+槽位注册因此是**六条**：
 
 | 槽位 | 组件 | 职责 |
 | --- | --- | --- |
-| `conversation.input.left`（list） | `structured/client/ui/Trigger.tsx` | 工具栏里的「结构化输入任务」按钮 |
+| `conversation.input.left`（list） | `structured/client/ui/Trigger.tsx` | 工具栏里的「结构化输入任务」按钮（有 tab 通路时开 tab，否则开弹窗） |
 | `conversation.input.left`（list） | `structured/client/ui/TaskTrigger.tsx` | 工具栏里的「任务扩写」按钮（读输入框草稿 → 扩写 → 回填，不弹窗） |
-| `conversation.input.dock`（list） | `structured/client/ui/Panel.tsx` | 表单弹窗（未打开时不占空间） |
+| `conversation.input.dock`（list） | `structured/client/ui/Panel.tsx` | 表单弹窗（未打开时不占空间）；没有 tab 通路时是唯一外壳，也是降级兜底 |
+| `sidebar.right.pane.tab`（keyed） | `structured/client/ui/SidebarForm.tsx` | 同一份表单挂在宿主右侧栏 tab 上（键 = 注册的 tab 类型 id） |
 | `conversation.input.left`（list） | `library/client/ui/Trigger.tsx` | 工具栏里的「提示词库」按钮 |
 | `conversation.input.dock`（list） | `library/client/ui/Panel.tsx` | 检索弹窗（未打开时不占空间） |
+
+tab 主体这一条**无条件注册**：`ctx.slots.inject('sidebar.right.pane.tab', …)` 只在宿主声明了那个槽位时才回调，宿主没有时它就是一个永不触发的等待（与其它槽位同一套语义）。但"开不开 tab"由 `SidebarSurface.open()` 的返回值决定 —— `false` 时入口退回弹窗，弹窗顶部再说明原因。
 
 四条注册都不可省略 `store` 座位（见上文[槽位注册契约](#槽位注册契约注册测试守住的那条线)），否则组件拿不到 `useStore` 会直接崩溃失效。声明后渲染器按「handle × sessionId」共享同一实例，所以入口的 `open()` 会直接驱动自己的弹窗重渲染——不需要任何跨注册的状态同步，也**不需要两个组件之间同步**：它们互不干涉（拆分前它们挤在同一个条目里、共用一个状态树，两个开关还得互斥）。
 
@@ -453,13 +465,28 @@ structured/client/store.ts ──► ui/Panel.tsx ──► ui/Modal.tsx ──�
                                  │      │           │
                                  │      │           └──► ui/ModalFooter.tsx（模板 / 导入导出 / 复制发送）
                                  │      └──► ui/Trigger.tsx（同一 store 的另一处读写）
-                                 └──► format.ts（纯函数）◄── PromptForm ── ui/sections/OutputSection.tsx
+                                 ├──► format.ts（纯函数）◄── PromptForm ── ui/sections/OutputSection.tsx
+                                 └──► ui/SidebarForm.tsx（宿主右侧栏 tab；外壳的位置与尺寸由宿主给）
 
 library/client/store.ts ──► ui/Panel.tsx ──► ui/LibraryModal.tsx ──► client/library.ts
                               └──► ui/Trigger.tsx                        └──►（同源路由 → 宿主代发）
 ```
 
 提示词库那条支线**不在构建器上**：`library/shared/library.ts` 与表单类型没有耦合，检索到的原文既不进 `PromptForm`、也不经 `buildSystemPrompt`，因此黄金样本（25 条）与它无关 —— 这正是"检索结果不走规范检测"在代码结构上的落点。
+
+### 表单为什么挂在右侧栏 tab 上（弹窗只作降级）
+
+弹窗定位在真机上修不干净，三层原因都实测过，**别重走**：
+
+1. 基准不是视口，而是**弹窗所在的那一列**（右侧栏开合会改列宽）；
+2. 要取「第一个够宽的祖先」（宽于视口 30%）：取「第一个比视口窄的」会命中工具栏/浮层（现象是空会话正常、一有对话就偏右），取「最宽的」会命中上层偏右的包裹层；
+3. `position: fixed` 的**包含块未必是视口** —— 祖先带 `transform` 时 `left` 会被叠加一次（实测 `left: 0` 渲染成 `rect.left = 280`），所以 `use-dialog-frame` 还要量出原点补偿。
+
+于是外壳换掉：表单本体 `FormPanel.tsx` 挂到侧栏，位置与尺寸交给宿主，插件不再测量。
+
+**后端按优先级取第一个能用的**（`sidebar.ts`）：`dsh-better-sidebar`（`ctx.betterSidebar`，这台机器上真正在用的侧栏，表单与文件树/编辑器并列）→ 宿主原生右侧栏（`sidebar.right.pane.tab`）→ 弹窗。后到的 better-sidebar 会**撤掉**已经挂上的原生类型（`nativeDispose`），否则同一份表单会在两套 tab 体系里各出现一次；它的 tab 主体不是插槽组件、拿不到 `useStore` 座位，所以 `createStructuredInputStore` 按 `scopeKey` 缓存实例，两处 `create` 拿到的是同一份状态。
+
+**接入必须顺序无关** —— 第一版在 `apply()` 里用 `ctx.get('sidebarRightTabs')` 探测一次就定生死，真机结果是"出来的还是弹窗"（服务提供方可能后于本插件 apply）。现在每条后端都有三条路：apply 期探测（早到就立即接）→ `ctx.inject([...], …)` 等它出现 → 真正打开时再探一次。老宿主什么都没有时 `open()` 返回 `false`，入口退回弹窗并在顶部写明原因（`data-degrade-note`，含三个服务各自的可见性）；服务在但 `openTab` 抛错同样返回 `false`，错误只进日志、不抛给点击处理器。
 
 ### 为什么不用另外两个候选挂载点
 

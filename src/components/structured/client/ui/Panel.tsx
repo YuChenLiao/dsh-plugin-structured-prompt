@@ -5,20 +5,25 @@
  * 提示词库是**另一个槽位条目**（`components/library/client/ui/Panel.tsx`），两者各开各的、
  * 互不干涉 —— 拆分前它们挤在同一个条目里。
  *
- * 发送经由宿主注入的 `onSend`；自动填充经由同源路由（宿主代跑子代理）。两者都是**副作用**，
- * 因此留在这个容器里 —— 弹窗组件只渲染状态，不碰网络。
+ * 这个容器留在输入区，即使表单已经改挂宿主的右侧栏 tab：它是
+ *  - 「库 → 表单」交接的唯一订阅者（挂在输入区、始终挂载，tab 打开时也在）；
+ *  - 侧栏不可用时的**降级外壳** —— 宿主没有 `sidebarRightTabs` 时，表单只能以弹窗出现，
+ *    并在顶部说明原因（`degradeNote`）。
  *
- * hook 顺序：`useStore` / `useRef` / `useEffect` 都必须在任何提前返回**之前**调用。
+ * 发送经由宿主注入的 `onSend`；扩写经由同源路由（宿主代跑子代理）。两者都是**副作用**，
+ * 因此留在这个容器里（`panel-hooks.ts`）—— 弹窗组件只渲染状态，不碰网络。
+ *
+ * hook 顺序：`useStore` / `useEffect` / 自定义 hook 都必须在任何提前返回**之前**调用。
  */
-import { useEffect, useRef } from 'react'
+import { useEffect } from 'react'
 import type { ReactNode } from 'react'
 import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-store'
 import type { StructuredState } from '../../shared/types.js'
 import { findTemplate } from '../../shared/templates.js'
-import { requestAssist } from '../assist.js'
-import { onFormPatch } from '../../../../shared/assist-bridge.js'
 import type { FormActions } from '../actions.js'
 import { StructuredPromptModal } from './Modal.js'
+import { useAssistRunner, useFormPatch } from './panel-hooks.js'
+import type { Reveal } from './panel-hooks.js'
 
 /** 表单弹窗挂载点的 props。 */
 export interface StructuredInputPanelProps {
@@ -30,15 +35,28 @@ export interface StructuredInputPanelProps {
   onSend: (prompt: string) => void
   /** 会话标识；无会话时不渲染。 */
   sessionId?: string
+  /**
+   * 揭示表单的另一个入口（宿主的右侧栏 tab）。
+   *
+   * 有它时「库 → 表单」优先开 tab；它返回 `false`（tab 开不成）才退回本弹窗。
+   */
+  onReveal?: Reveal
+  /**
+   * 降级原因：**每次渲染时求值**（不做成静态字符串）。
+   *
+   * 打开失败才产生内容，而失败会伴随一次 store 变更 —— 顺序正好：点击 → `open()` 返回 false →
+   * `actions.open()` → 重渲染 → 这里拿到原因。宿主能力缺失与运行期打开失败因此共用一条通道。
+   */
+  degradeNote?: () => string | undefined
 }
 
 /**
  * 表单弹窗挂载点。
- * @param props - store 座位、发送回调与会话标识。
+ * @param props - store 座位、发送回调、会话标识与降级信息。
  * @returns 弹窗，或未打开时的 `null`。
  */
 export function StructuredInputPanel({
-  useStore, actions, onSend, sessionId,
+  useStore, actions, onSend, sessionId, onReveal, degradeNote,
 }: StructuredInputPanelProps): ReactNode {
   const active = useStore(state => state.active)
   const form = useStore(state => state.form)
@@ -48,19 +66,10 @@ export function StructuredInputPanel({
   // id → 模板的解析在这里，而不是在 `Modal` 内部：模板来源属于数据层，界面组件只收结果。
   const applied = findTemplate(appliedTemplate)
 
-  // 自动填充的请求序号：只有最后一次发起的结果能落进表单（与库检索同一套防错位手法 ——
-  // 连点两次时，慢的那个响应不该覆盖新的一次）。
-  const assistSeq = useRef(0)
-
-  // 接收提示词库那边交过来的补丁（"转化为表单"）：合并进当前表单并打开弹窗。
-  // 用一次性事件而不是共享状态 —— 收不到就丢掉，不留下需要清理的残留。
-  useEffect(() => onFormPatch((patch) => {
-    actions.mergeForm(patch)
-    // 转化结果不是"套用模板"：套用标记要清掉，否则场景条会声称表单来自某套内置模板。
-    actions.setAppliedTemplate('')
-    actions.patchAssist({ status: 'done', error: '', warnings: [] })
-    actions.open()
-  }), [actions])
+  const runAssist = useAssistRunner({ form, assist, actions, sessionId })
+  useFormPatch(actions, onReveal, sessionId)
+  // 降级原因在这里求值：它依赖"刚才那次点击的结果"，静态字符串只能表达 apply 期的猜测。
+  const note = degradeNote?.()
 
   // Esc 关闭弹窗；未打开时不挂监听。
   useEffect(() => {
@@ -73,34 +82,6 @@ export function StructuredInputPanel({
     window.addEventListener('keydown', onKeyDown, true)
     return () => { window.removeEventListener('keydown', onKeyDown, true) }
   }, [active, actions])
-
-  /**
-   * 请宿主跑一次扩写，把结果补丁落进表单。
-   *
-   * 三重防护：进行中不再发（防连点）、内容为空不发、序号不符的响应直接丢弃。
-   */
-  const runAssist = (): void => {
-    if (assist.status === 'running') return
-    const brief = assist.brief.trim()
-    if (brief === '' || sessionId === undefined) return
-    assistSeq.current += 1
-    const seq = assistSeq.current
-    actions.patchAssist({ status: 'running', error: '', warnings: [] })
-    // 带上当前表单：宿主会转给子代理，避免把用户已经填好的字段清掉。
-    void requestAssist({ action: 'expand', brief, current: form }, sessionId).then((result) => {
-      if (seq !== assistSeq.current) return
-      if (!result.ok) {
-        actions.patchAssist({ status: 'failed', error: result.error })
-        return
-      }
-      // 只合并模型给到的字段：用 setForm 会把用户已填、而模型没返回的字段清空。
-      actions.mergeForm(result.value.patch)
-      // 扩写不是"套用模板"：套用标记必须清掉，否则场景条会声称表单来自某套内置模板。
-      actions.setAppliedTemplate('')
-      // 成功时一并清掉上一次失败的 error，否则它会和成功提示同时显示。
-      actions.patchAssist({ status: 'done', error: '', warnings: [...result.value.warnings] })
-    })
-  }
 
   if (!active || sessionId === undefined) return null
 
@@ -115,6 +96,7 @@ export function StructuredInputPanel({
       assist={assist}
       onBriefChange={(brief) => actions.setAssistBrief(brief)}
       onAssist={runAssist}
+      {...(note === undefined ? {} : { degradeNote: note })}
     />
   )
 }

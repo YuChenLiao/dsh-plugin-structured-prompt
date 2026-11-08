@@ -69,6 +69,15 @@ export interface ClientPluginContext {
    * @param name - 服务名。
    */
   get(name: string): unknown
+  /**
+   * 依赖就绪后执行回调（Cordis 的子上下文——可选项，老实现可能没有）。
+   *
+   * 用它而不是把服务写进插件导出的 `inject`：后者在缺该服务的宿主上会让整个插件停在
+   * PENDING（连按钮都消失），而这里只是那条支线不装配。
+   * @param deps - 需要的服务名。
+   * @param callback - 就绪时收到子上下文。
+   */
+  inject?(deps: readonly string[], callback: (scope: ClientPluginContext) => void): unknown
   /** 槽位注册面。 */
   slots: SlotsService
 }

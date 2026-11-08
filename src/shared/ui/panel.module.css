@@ -58,6 +58,18 @@
   backdrop-filter: var(--dsw-mask-blur, blur(2px));
 }
 
+/* 表单本体：弹窗里撑满 .modal，侧栏 tab 里撑满宿主给的那块地方。
+   尺寸与定位一律由外层决定，这里只管"纵向撑开 + 让内容区成为唯一滚动容器"。
+   `height: 100%` 是给侧栏那边的：宿主的 tab 容器有确定高度，按百分比才撑得满
+   （弹窗里父级高度是 auto，百分比退回 content，行为不变）。 */
+.panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+}
 .modal {
   display: flex;
   flex-direction: column;

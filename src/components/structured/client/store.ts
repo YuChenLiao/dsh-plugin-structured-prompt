@@ -10,7 +10,7 @@
  * 成对操作；`addTool` / `removeTool` 是唯一的成对入口，避免两个数组长度错位。
  */
 import { defineStore } from '@deepseek-ai/dsh-client-store'
-import type { StoreHandle } from '@deepseek-ai/dsh-client-store'
+import type { StoreHandle, StoreInstance } from '@deepseek-ai/dsh-client-store'
 import type { AssistState, ListFieldKey, PromptForm, StructuredState } from '../shared/types.js'
 import { completeForm, createEmptyForm } from '../shared/forms.js'
 
@@ -41,7 +41,8 @@ export interface StructuredActions {
   /**
    * 按字段合并（自动填充用）。
    *
-   * 与 {@link setForm} 的区别是**只覆盖给定的键**：模型只补了 ole/goal 时，用户已经填好的
+   * 与 {@link setForm} 的区别是**只覆盖给定的键**：模型只补了 
+ole/goal 时，用户已经填好的
    * 其它字段必须原样留着 —— 用 setForm 会把它们清空（那是模板填充/导入的语义，不是补全的）。
    */
   mergeForm(draft: StructuredState, patch: Partial<PromptForm>): void
@@ -76,10 +77,24 @@ export type StructuredInputStore = StoreHandle<StructuredState, StructuredAction
 
 /**
  * 声明结构化提示词的 store。
+ *
+ * **同一 `scopeKey` 只造一个实例**。槽位渲染器本来就按「handle × sessionId」缓存实例，所以
+ * 槽位之间天然共享；但侧栏（`dsh-better-sidebar` 的 tab 主体）不是槽位 —— 它只能自己
+ * `handle.create(sessionId)`，而 `defineStore` 的 `create` 刻意不去重（"instance uniqueness
+ * per key is the caller's responsibility"）。不在这里缓存的话，侧栏 tab 与入口按钮会各拿一份
+ * 状态：侧栏里改了表单、弹窗里看不到，「库 → 表单」的补丁也会落进没人显示的那一份。
+ *
+ * **这份缓存不做淘汰**，两个理由：
+ *  1. 淘汰等于让某个还挂着的界面悄悄改用另一份实例（状态分裂比内存泄漏严重得多）；
+ *  2. 没有 `persist`，一个实例只是几十个字段的普通对象，一个会话一条的代价可以忽略。
+ *
+ * 与宿主语义的已知差异：会话作用域彻底死亡时，宿主会丢弃自己的实例（`clearPersisted`），而缓存
+ * 仍留着那份对象 —— 同一个 `scopeKey` 再来会拿到"旧状态"。会话 id 不重复，所以这只发生在热重载
+ * 后的同 id 重连；真要用到 `persist` 之前，得先在这里补上按作用域释放的路径。
  * @returns store 句柄，写集覆盖整表替换、字段写入、数组条目增删改序与分组折叠。
  */
 export function createStructuredInputStore(): StructuredInputStore {
-  return defineStore<StructuredState, StructuredActions>({
+  const base = defineStore<StructuredState, StructuredActions>({
     init: emptyState,
     actions: {
       open: (draft) => { draft.active = true },
@@ -129,4 +144,17 @@ export function createStructuredInputStore(): StructuredInputStore {
       },
     },
   })
+  /** scopeKey → 实例（空串代表无会话的根作用域）。 */
+  const instances = new Map<string, StoreInstance<StructuredState, StructuredActions>>()
+  return {
+    spec: base.spec,
+    create(scopeKey) {
+      const key = scopeKey ?? ''
+      const hit = instances.get(key)
+      if (hit !== undefined) return hit
+      const made = base.create(scopeKey)
+      instances.set(key, made)
+      return made
+    },
+  }
 }

@@ -228,22 +228,23 @@ check('README 的模板数量与实际一致',
   declaredTemplates > 0 && declaredTemplates === TEMPLATES.length,
   `README=${declaredTemplates} 实际=${TEMPLATES.length}`)
 
-// 槽位：README 提到的 `conversation.input.*` 必须正好是实际注册的那些。拆分后**每个槽位键会被
-// 注册两次**（两个组件各一条），所以这里比的是去重后的集合；而架构表必须逐行列出全部注册
-// （行数 == 注册数），少写一行或多写一行都会红。
+// 槽位：README 提到的槽位键必须正好是实际注册的那些。同一槽位键会被注册两次（两个组件各一条），
+// 所以这里比的是去重后的集合；而架构表必须逐行列出全部注册（行数 == 注册数），少写一行或多写
+// 一行都会红。右侧栏的 tab 主体也是注册之一（`sidebar.right.pane.tab`），一样要列。
+const SLOT_KEY = /`((?:conversation\.input|sidebar\.right)\.[a-z.]+)`/g
 const registeredSlots = clientModule === null
   ? []
   : clientModule.slotEntries(() => {}).map(entry => entry.name)
 const uniqueSlots = [...new Set(registeredSlots)].sort()
 const readmeSlots = [...new Set(
-  [...readme.matchAll(/`(conversation\.input\.[a-z.]+)`/g)].map(match => match[1]),
+  [...readme.matchAll(SLOT_KEY)].map(match => match[1]),
 )].sort()
 check('README 的槽位键与注册的槽位一致',
   uniqueSlots.length > 0 && readmeSlots.join(',') === uniqueSlots.join(','),
   `README=${readmeSlots.join(',')} 实际=${uniqueSlots.join(',')}`)
-const slotTableKeys = [...readme.matchAll(/\| `(conversation\.input\.[a-z.]+)`（list） \|/g)]
+const slotTableKeys = [...readme.matchAll(/\| `((?:conversation\.input|sidebar\.right)\.[a-z.]+)`（(?:list|keyed)） \|/g)]
   .map(match => match[1])
-check('README 架构表的槽位行与注册一一对应（四条注册各一行）',
+check('README 架构表的槽位行与注册一一对应（每条注册各一行）',
   slotTableKeys.length === registeredSlots.length
   && [...new Set(slotTableKeys)].sort().join(',') === uniqueSlots.join(','),
   `表格 ${slotTableKeys.length} 行=${slotTableKeys.join(',')}`
