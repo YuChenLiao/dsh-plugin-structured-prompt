@@ -101,9 +101,12 @@ export function useDialogFrame<T extends HTMLElement>(ref: RefObject<T | null>):
     }
     measure()
     const observer = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(measure)
-    // 观察遮罩的父元素即可：列宽变化会传导到它，因此不必先知道列在哪。
-    const anchor = ref.current?.parentElement
-    if (anchor !== null && anchor !== undefined) observer?.observe(anchor)
+    // 观察**找到的那一列**，而不是遮罩的父元素。
+    //
+    // 真机数据：`div[conversation.input.dock]` 的宽度是 **0** —— 宽 0 的元素宽度永远不会变，
+    // 拿它当锚点等于没有观察；右栏一开合，列宽与包含块原点都变了却不会重测，位置就复发。
+    const column = ref.current === null || ref.current === undefined ? undefined : findColumn(ref.current)
+    if (column !== undefined) observer?.observe(column)
     window.addEventListener('resize', measure)
     return () => {
       observer?.disconnect()
