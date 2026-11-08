@@ -681,7 +681,9 @@ check('定位基准是「第一个够宽的祖先」（跳过窄容器，不取�
 check('定位时补偿包含块原点（fixed 的包含块可能不是视口）',
   /mask\.style\.left = '0px'/.test(frameSource)
   && /getBoundingClientRect\(\)\.left/.test(frameSource)
-  && /frameFromRect\(rect, blockOrigin\)/.test(frameSource))
+  && /frameFromRect\(rect, blockOrigin\)/.test(frameSource)
+  // 光传进去不算：函数体里必须真的**减掉**它。上一版只查了调用处，去掉减法仍然零红。
+  && /rect\.left - blockOrigin/.test(frameSource))
 
 // ---- 11) 自动填充的界面状态 ----
 //
