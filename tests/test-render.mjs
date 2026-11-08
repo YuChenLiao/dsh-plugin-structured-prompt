@@ -669,11 +669,12 @@ check('组件用到的类名都在 panel.module.css 里存在（挡住类名 typ
 //    第一版修复只取了一层 `parentElement`，而槽位包装层可能仍是整宽容器 —— 那样测出来等于
 //    视口宽、弹窗照旧居中，界面上毫无变化。所以这里同时守住"会向上找"。
 const frameSource = readFileSync(resolve(SHARED, 'ui', 'use-dialog-frame.ts'), 'utf8')
-// 守语义而不是字面：基准必须是「比视口窄、且是链上最宽的那个祖先」——只取第一个命中的，
-// 会命中工具栏/浮层这类局部容器，遮罩就贴到窗口边上去（真机实测过的现象）。
-check('定位基准是「比视口窄、且最宽的那个祖先」（不是视口，也不是第一个命中的局部容器）',
-  /width < viewport/.test(frameSource)
-  && /widest/.test(frameSource)
+// 守语义而不是字面：基准必须是「第一个够宽的祖先」—— 既不能是工具栏/浮层那种窄容器（空会话居中
+// 正常、一有对话就偏右，就是命中了它们），也不能取"最宽的"（上层可能有偏右的包裹层）。
+check('定位基准是「第一个够宽的祖先」（跳过窄容器，不取最宽的偏右层）',
+  /width >= viewport \* MIN_RATIO/.test(frameSource)
+  && /return node/.test(frameSource)
+  && !/widest/.test(frameSource)
   && !/documentElement/.test(frameSource))
 check('基准会向上找（槽位包装层数随版本变，只看一层会静默失效）',
   /node = node\.parentElement/.test(frameSource))

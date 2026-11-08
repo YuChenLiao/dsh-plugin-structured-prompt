@@ -59,21 +59,24 @@ const NARROW_TOLERANCE_PX = 8
  */
 function findColumn(start: HTMLElement): HTMLElement {
   const viewport = window.innerWidth
-  // 取**最宽的**那个「比视口窄」的祖先，而不是第一个命中的。
+  // 判据：从遮罩向上，取**第一个"够宽"**的祖先。
   //
-  // 为什么：槽位容器可能被渲染在某个局部容器里（工具栏、某个浮层），而"比视口窄"这个条件它们
-  // 全都满足 —— 只看第一个命中的，遮罩就会贴着那个小容器（实测现象是弹窗跑到窗口右侧）。
-  // 越往上越宽，所以"最宽的窄祖先"必然最接近真正的对话列。
-  let widest: HTMLElement | null = null
+  // 为什么不是"第一个比视口窄的"：槽位容器常被渲染在工具栏/浮层这类局部容器里，它们全都比视口窄，
+  // 第一个命中的往往是它们 —— 遮罩就贴着那个小容器（真机现象：空会话居中正常，一有对话就偏右，
+  // 因为两种布局下槽位落在不同的容器里）。
+  //
+  // 为什么不是"最宽的"：更上层可能有"比视口窄、但位置上偏右"的容器（侧栏包裹层之类），
+  // 最宽会选中它们。而输入卡片/对话列一定紧邻槽位、且占视口相当比例。
+  //
+  // 阈值取视口宽的三成：工具栏、浮层、单行的按钮组都在三成以下；输入卡片与对话列一定在以上。
+  const MIN_RATIO = 0.3
   let node: HTMLElement | null = start
   while (node !== null && node !== document.body) {
     const width = node.clientWidth
-    if (width > 0 && width < viewport - NARROW_TOLERANCE_PX) {
-      if (widest === null || width > widest.clientWidth) widest = node
-    }
+    if (width >= viewport * MIN_RATIO && width < viewport - NARROW_TOLERANCE_PX) return node
     node = node.parentElement
   }
-  return widest ?? start
+  return start
 }
 
 /**
