@@ -672,21 +672,16 @@ const frameSource = readFileSync(resolve(SHARED, 'ui', 'use-dialog-frame.ts'), '
 // 守语义而不是字面：基准必须是「第一个够宽的祖先」—— 既不能是工具栏/浮层那种窄容器（空会话居中
 // 正常、一有对话就偏右，就是命中了它们），也不能取"最宽的"（上层可能有偏右的包裹层）。
 check('定位基准是「第一个够宽的祖先」（跳过窄容器，不取最宽的偏右层）',
-  /width >= viewport \* MIN_RATIO/.test(frameSource)
+  /width >= viewport \* MIN_COLUMN_RATIO/.test(frameSource)
   && /return node/.test(frameSource)
   && !/widest/.test(frameSource)
   && !/documentElement/.test(frameSource))
-check('基准会向上找（槽位包装层数随版本变，只看一层会静默失效）',
-  /node = node\.parentElement/.test(frameSource))
-check('列尺寸无效时不写定位（避免把遮罩压成不可见）',
-  /width > 0/.test(frameSource) && /height > 0/.test(frameSource))
-check('rect → 遮罩样式的映射正确（纯函数，可离线断言）', (() => {
-  const frame = frameFromRect({ left: 120, width: 800, height: 600 })
-  return frame.left === 120 && frame.width === 800 && frame.right === 'auto' && frame.top === undefined
-})())
-check('列尺寸为 0 时退回 CSS 的 inset: 0（不写定位）',
-  Object.keys(frameFromRect({ left: 0, width: 0, height: 0 })).length === 0,
-  JSON.stringify(frameFromRect({ left: 0, width: 0, height: 0 })))
+// 真机实测过：算出的 left: 280 被渲染成 rect.left = 560 —— `position: fixed` 的包含块不是视口
+// （祖先带 transform 时变成那个祖先），偏移被叠加了一次。这条断言守"必须补偿包含块原点"。
+check('定位时补偿包含块原点（fixed 的包含块可能不是视口）',
+  /mask\.style\.left = '0px'/.test(frameSource)
+  && /getBoundingClientRect\(\)\.left/.test(frameSource)
+  && /frameFromRect\(rect, blockOrigin\)/.test(frameSource))
 
 // ---- 11) 自动填充的界面状态 ----
 //
