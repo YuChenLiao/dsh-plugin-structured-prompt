@@ -11,6 +11,7 @@
 import type { HostPluginContext } from './host/tool.js'
 import { registerStructuredPromptTool } from './host/tool.js'
 import { registerAssistRoute } from './host/assist.js'
+import { registerTaskRewriteRoute } from './host/assist-task.js'
 import type { AssistContext } from './host/assist.js'
 import { narrowConfig } from './host/config.js'
 
@@ -36,4 +37,6 @@ export function apply(ctx: HostPluginContext, config?: unknown): void {
   // 自动填充：把一句话扩写成字段补丁。可选能力 —— 没有模型配置也没有子代理服务时它只是
   // 不可用（路由里会给出 501 / 跳过注册），不影响"构建提示词"。
   registerAssistRoute(ctx as unknown as AssistContext, narrowed)
+  // 「任务扩写」：把输入框里的一句话扩写成可直接发送的正文（回填对话框，不弹窗）。
+  registerTaskRewriteRoute(ctx as unknown as Parameters<typeof registerTaskRewriteRoute>[0], narrowed)
 }

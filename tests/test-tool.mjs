@@ -11,6 +11,7 @@
  * 用法：node --import tsx --import ./tools/lib/loader-hook.mjs tests/test-tool.mjs
  */
 import { pathToFileURL } from 'node:url'
+import { readFileSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -137,11 +138,14 @@ const delegateText = [
   properties.delegate.description,
   properties.delegate.properties?.provider?.description,
 ].map(value => String(value ?? '')).join(' ')
-check('delegate 描述钉住「可选」与「首轮风险」，且不含默认/优先措辞',
+// `delegate` 在当前 DSH 版本不可用（`subagents.start` 未暴露给插件），描述必须把这件事说在前
+// 面 —— 否则模型会照描述去走一条断掉的路，然后判定整个工具没价值。
+check('delegate 描述钉住「可选」与「当前版本不可用」，且不含默认/优先措辞',
   delegateText.startsWith('Optional')
-  && delegateText.includes('first turn')
+  && delegateText.includes('NOT AVAILABLE')
+  && delegateText.includes('start()')
   && !/\balways\b|\bby default\b|\bprefer\b|\buse it first\b/i.test(delegateText),
-  delegateText.slice(0, 140))
+  delegateText.slice(0, 160))
 check('output_format 的 enum 覆盖全部骨架格式',
   Object.keys(prompt.OUTPUT_FORMAT_SKELETONS)
     .every(key => (properties.output_format.enum ?? []).includes(key)))
@@ -820,15 +824,19 @@ check('不带模板时缺 role 仍报错，且错误信息给出出路',
 check('放宽的是「缺失/空白」而不是类型：有模板时 role 传数字照样报错',
   (await rejectionOf(() => definition.execute({ role: 42, goal: 'x', template: 'code-review' }))) !== null)
 
-// 下面两条钉的是**措辞**（口径一致性），不是可替换的同义词：改文案就要同步改断言 —— 与 `delegate`
-// 描述那条同源。示例那条用形式断言：换示例模板不该报错，删掉示例必须报错。
-check('工具说明与参数说明同口径：都写明模板会带上 role 与 goal',
-  String(definition.description).includes('carries both')
-  && String(properties.template.description ?? '').includes('including `role` and `goal`'),
-  String(definition.description).slice(0, 130))
-check('工具说明给出一个「模板 + 具体目标」的例子',
-  /For example: `\{ template: '[a-z-]+', goal: '[^']*' \}`/.test(String(definition.description)),
-  String(definition.description).slice(120, 320))
+// 这两条守**语义**而不是某一句话：工具说明必须交代"模板会带上 role 与 goal"（用词可换，
+// 但两个字段名都要出现、且要说明"调用参数会覆盖模板默认"），并且给出一个「模板 + 具体目标」
+// 的可复制例子。上一版按 `carries both` / `For example:` 逐字钉，改文案就误报 —— 断言的锋利度
+// 应该来自"删掉这段会不会失效"，而不是"字面是否一模一样"。
+check('工具说明交代「模板自带 role 与 goal，调用参数覆盖它」', (() => {
+  const text = String(definition.description)
+  return /template/i.test(text)
+    && /\brole\b/.test(text) && /\bgoal\b/.test(text)
+    && /override|default|supplies|carries/i.test(text)
+})(), String(definition.description).slice(0, 200))
+check('工具说明给出一个「模板 + 具体目标」的可复制例子',
+  /\{\s*template:\s*'[a-z-]+'\s*,\s*goal:\s*'[^']*'\s*\}/.test(String(definition.description)),
+  String(definition.description).slice(120, 400))
 check('goal 的描述提示「能写具体就写具体」',
   String(properties.goal.description ?? '').includes('concrete task'))
 
@@ -1920,6 +1928,145 @@ unsubscribeBridge()
 check('bridge：退订后不再收到',
   bridgeModule.offerFormPatch({ role: 'z' }) === 0 && bridgeReceived.length === 1)
 bridgeModule.resetFormPatchListeners()
+
+
+// ---- 13) 任务扩写（一句话 → 可直接发送的正文，回填输入框）----
+//
+// 与 expand / convert 的差别在**产物形态**：那两条产出字段补丁进表单，这条产出纯文本回填草稿。
+
+const taskModule = await import(
+  pathToFileURL(resolve(SRC, 'components', 'structured', 'host', 'assist-task.ts')).href
+)
+const taskClient = await import(
+  pathToFileURL(resolve(SRC, 'components', 'structured', 'client', 'assist-task.ts')).href
+)
+check('任务扩写：客户端与宿主的路径一致',
+  taskClient.TASK_PATH === taskModule.TASK_ROUTE_PATH,
+  `${taskClient.TASK_PATH} vs ${taskModule.TASK_ROUTE_PATH}`)
+
+const taskPrompt = taskModule.buildTaskRewritePrompt('把 a.ts 里的 X 换成 Y')
+check('任务扩写提示词：明确不要字段标签（产物是正文，不是表单）',
+  taskPrompt.includes('不要') && taskPrompt.includes('字段标签'))
+check('任务扩写提示词：素材以 JSON 包裹（伪造分隔符改不了结构）',
+  taskPrompt.includes('"task": "把 a.ts 里的 X 换成 Y"'))
+check('任务扩写提示词：无依据的细节要写成条件句（不凭空断言事实）',
+  taskPrompt.includes('条件句'))
+check('cleanTaskText 去掉整段代码围栏',
+  taskModule.cleanTaskText('```md\n正文\n```') === '正文')
+check('cleanTaskText 保留行内反引号（不误伤专有名词）',
+  taskModule.cleanTaskText('用 `a.ts` 改') === '用 `a.ts` 改')
+
+const taskCalls = []
+const taskLlm = {
+  stream(options) {
+    taskCalls.push(options)
+    return (async function* generate() {
+      yield { type: 'text-delta', text: '扩写后的正文' }
+    })()
+  },
+}
+const taskCtx = {
+  get: name => {
+    if (name === 'llm') return taskLlm
+    if (name === 'sessions') return { get: () => ({ append: () => {}, id: 's1' }) }
+    if (name === 'sessionProjections') {
+      return { stateOf: () => ({ lastUsed: { provider: 'p', model: 'm' }, pending: null }) }
+    }
+    return undefined
+  },
+}
+const taskRun = await taskModule.runRewriteTask(
+  taskCtx,
+  new Request('http://x/', {
+    method: 'POST',
+    body: JSON.stringify({ task: '原始任务', sessionId: 's1' }),
+  }),
+)
+check('任务扩写主链：返回纯文本（不是字段补丁），并真的调了模型',
+  'text' in taskRun && typeof taskRun.text === 'string'
+  && taskRun.text.includes('扩写后的正文') && taskCalls.length === 1,
+  JSON.stringify(taskRun))
+
+const taskEmpty = await taskModule.runRewriteTask(
+  taskCtx,
+  new Request('http://x/', {
+    method: 'POST',
+    body: JSON.stringify({ task: '   ', sessionId: 's1' }),
+  }),
+)
+check('任务扩写：空输入 → 400（不拿空字符串去问模型）',
+  'error' in taskEmpty && taskEmpty.status === 400, JSON.stringify(taskEmpty))
+
+
+// ---- 14) 回填草稿与三级路由 ----
+//
+// 审查实测：setDraft / requestRewrite / resolveModelRoute 在测试里出现 0 次 —— 把回填那行删掉、
+// 或把 config 那一级删掉，八套仍全绿。这段补的就是这个缺口。
+
+const taskTriggerSource = readFileSync(
+  resolve(SRC, 'components', 'structured', 'client', 'ui', 'TaskTrigger.tsx'),
+  'utf8',
+)
+check('任务扩写：回填走 inputActions.setDraft（不是别的路）',
+  /inputActions\.setDraft\(result\.value\.text\)/.test(taskTriggerSource))
+check('任务扩写：回填前比对草稿快照（不静默覆盖用户期间的新输入）',
+  /latestDraft\.current\.trim\(\) !== snapshot/.test(taskTriggerSource))
+check('任务扩写：连点有 ref 守卫（同一 tick 的两次点击只跑一次）',
+  /busy\.current/.test(taskTriggerSource))
+
+const rewriteBodies = []
+const rewriteFetch = async (_url, init) => {
+  rewriteBodies.push(JSON.parse(String(init?.body ?? '{}')))
+  return new Response(JSON.stringify({ text: '扩写后的正文', provider: 'p/m', via: 'llm' }), {
+    status: 200,
+    headers: { 'content-type': 'application/json' },
+  })
+}
+const rewriteOk = await taskClient.requestRewrite('原始任务', 's1', { fetchImpl: rewriteFetch })
+check('任务扩写请求体带 task 与 sessionId',
+  rewriteBodies[0]?.['task'] === '原始任务' && rewriteBodies[0]?.['sessionId'] === 's1',
+  JSON.stringify(rewriteBodies[0]))
+check('任务扩写响应解析出正文与路径',
+  rewriteOk.ok && rewriteOk.value.text === '扩写后的正文' && rewriteOk.value.via === 'llm',
+  JSON.stringify(rewriteOk))
+const rewriteBlank = await taskClient.requestRewrite('x', 's1', {
+  fetchImpl: async () => new Response(JSON.stringify({ text: '   ' }), { status: 200 }),
+})
+check('任务扩写：响应正文为空时判失败（不把空串填进输入框）', rewriteBlank.ok === false)
+
+// 三级路由：会话 → 默认 → 配置。顺序反过来必须被抓住。
+const routeCtx = (projection, fallback) => ({
+  get: name => {
+    if (name === 'sessions') return { get: () => ({ append: () => {}, id: 's1' }) }
+    if (name === 'sessionProjections') return { stateOf: () => projection }
+    if (name === 'agentDefaultModel') return { currentSelection: () => fallback }
+    return undefined
+  },
+})
+const noSelection = { lastUsed: null, pending: null }
+check('三级路由：会话有选择时用它（即使有默认与配置）',
+  assistModelModule.resolveModelRoute(
+    [routeCtx({ lastUsed: { provider: 'sess', model: 'sm' }, pending: null }, { provider: 'def', model: 'dm' })],
+    's1',
+    { assistProvider: 'cfg', assistModel: 'cm' },
+  ).route?.provider === 'sess')
+check('三级路由：会话无选择时退回宿主默认模型',
+  assistModelModule.resolveModelRoute(
+    [routeCtx(noSelection, { provider: 'def', model: 'dm' })],
+    's1',
+    { assistProvider: 'cfg', assistModel: 'cm' },
+  ).route?.provider === 'def')
+check('三级路由：只有配置时用配置',
+  assistModelModule.resolveModelRoute(
+    [routeCtx(noSelection, undefined)],
+    's1',
+    { assistProvider: 'cfg', assistModel: 'cm' },
+  ).route?.provider === 'cfg')
+check('三级路由：三级全空时给出两级各自的原因', (() => {
+  const out = assistModelModule.resolveModelRoute([routeCtx(noSelection, undefined)], 's1', {})
+  return out.route === undefined && typeof out.reason === 'string'
+    && out.reason.includes('会话模型') && out.reason.includes('默认模型')
+})())
 
 if (failed > 0) {
   console.error(`\n${failed} 项工具测试未通过。`)

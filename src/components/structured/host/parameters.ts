@@ -25,21 +25,47 @@ export const OUTPUT_FORMATS: string[] = Object.keys(OUTPUT_FORMAT_SKELETONS)
 /** 可选的内置模板 id。 */
 export const TEMPLATE_IDS: string[] = TEMPLATES.map(template => template.id)
 
-/** 模型面向的工具说明。 */
+/**
+ * 模型面向的工具说明。
+ *
+ * 这段文字直接决定"模型会不会用它"，所以措辞按**决策点**组织，而不是按功能罗列：
+ *
+ *  1. 先给**该用**的识别信号 —— 模型选工具靠场景匹配，描述里没有信号就不会触发；
+ *  2. 再说它比"自己随手写一段"强在哪（约束不丢、产物确定、可复用）；
+ *  3. 最后才给"什么时候可以省"，而且条件要严格。
+ *
+ * 两条历史教训：
+ *  - 上一版把「Skip it for simple delegations，直接调 subagent 更便宜」放在显要位置、前后共三次
+ *    提成本，结果模型在"要不要派遣子代理"这个判断点上一律跳过它 —— 劝阻写得太靠前，等于替模型
+ *    做了"不用"的决定。
+ *  - 另一处是把唯一用途写成"把结果传给 subagent 工具"，而 `delegate` 在当前 DSH 版本不可用
+ *    （`subagents.start` 未暴露给插件）。承诺一条断掉的路，会让模型判定这个工具没用。
+ */
 export const TOOL_DESCRIPTION = [
-  'Build a precise, structured prompt and return it verbatim.',
-  'Use it to turn a vague delegation into an explicit one: fill `role` and `goal`, or start',
-  'from a `template` (every built-in one carries both), then pass the returned text as the',
-  '`prompt` argument of the subagent tool. Every other field is optional — add `rules`,',
-  '`forbidden`, `output_format`, `fallback` and so on when the child needs tighter',
-  'constraints. A template\'s fields act as defaults and anything you pass overrides them;',
-  'state the concrete task even when the template already has a goal, since that goal is',
-  'generic. For example: `{ template: \'code-review\', goal: \'<the concrete task>\' }`.',
-  // 说清"什么时候不该用"：简单任务直接调 subagent 更省，否则模型会对每个委托都先构建一遍。
-  'Skip it for simple delegations — calling the subagent tool directly with a plain task is',
-  'cheaper. This tool earns its cost when the child needs several explicit constraints you',
-  'would otherwise have to spell out anyway.',
-].join(' ')
+  'Build a precise, structured prompt from named fields and return it verbatim.',
+  '',
+  'USE IT whenever the work is handed to another agent or saved for reuse and the target',
+  'needs more than one loose sentence: who it is (`role`), what counts as done (`goal` plus',
+  '`success_criteria`), what it must and must not do (`rules` / `forbidden`), which tools it',
+  'may touch (`tool_policy` / `callable_tools`), and how the answer must be shaped',
+  '(`output_format` / `output_spec`). "Write me a prompt", "攒一个提示词", "把这件事交代给',
+  '子代理" are all direct requests for this tool. The returned text is yours to use: hand it',
+  'to a subagent, save it, or act on it yourself.',
+  '',
+  'WHY IT BEATS WRITING PROSE INLINE: every field becomes its own fixed section, so constraints',
+  'stop competing inside one paragraph and none of them silently drops. The output is',
+  'deterministic — identical fields always produce identical text — which is what makes a',
+  'prompt reviewable, diffable and reusable later.',
+  '',
+  'START FROM A TEMPLATE when the task matches a known shape:',
+  '`{ template: \'code-review\', goal: \'<the concrete task>\' }` — the template supplies every',
+  'field it carries (including `role` and `goal`) and anything you pass overrides it. Still',
+  'state the concrete task, since a template\'s goal is generic by design.',
+  '',
+  'SKIP IT only when the whole hand-off is genuinely one sentence with no constraint worth',
+  'enforcing; otherwise the structured result is cheaper than the paraphrase you would have to',
+  'write anyway.',
+].join('\n')
 
 /**
  * 参数表（标准 JSON Schema）。
@@ -141,7 +167,9 @@ export const TOOL_PARAMETERS_SCHEMA = {
           description: 'Subagent provider name. Normally omit it: the deployment default is used (a one-shot run unless the profile configured otherwise). Pass it only to deliberately delegate through another registered provider — e.g. one that inherits this conversation instead of working independently.',
         },
       },
-      description: 'Optional — run the built prompt as a foreground subagent instead of returning it. Useful when this conversation is already long, or when the work needs broad exploration: the prompt then never enters your own context. Avoid it on the first turn, while the task is still being pinned down and there is no history to work from: the child runs standalone and cannot see this conversation, so everything it needs must be written into the prompt.',
+      description: 'Optional — run the built prompt as a foreground subagent instead of returning it. '
+        + 'NOT AVAILABLE in the current DSH build: the subagent service does not expose `start()` to '
+        + 'plugins, so this argument fails with a readable error. Omit it and use the returned text.',
     },
   },
   required: ['role', 'goal'],

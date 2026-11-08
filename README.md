@@ -314,6 +314,7 @@ src/components/                       两个组件各自成目录（形态参考
       subagents.ts                    直投子代理：provider 选择 + 前台 run 的收尾
       config.ts                       装载行配置（provider 供子代理、assistProvider/assistModel 供单次调用）与 Config schema
       assist.ts                       自动填充/转化：单次调用（继承会话模型），子代理仅作回退（当前版本不可用）
+      assist-task.ts                  任务扩写：一句话 → 可直接发送的正文（回填输入框）
       assist-prompt.ts                自动填充的提示词构造（一句话 → 字段）
       assist-convert-prompt.ts        转化提示词（库里的成品提示词 → 字段，搬运不改写）
       assist-llm.ts                   单次调用路径（llm.stream）
@@ -332,6 +333,7 @@ src/components/                       两个组件各自成目录（形态参考
       actions.ts                      组件侧的动作类型（打断循环引用）
       assist.ts                       自动填充的客户端调用（同源路由，不碰 store）
       ui/AssistRow.tsx                自动填充那一行（输入 + 触发 + 状态）
+      assist-task.ts                  任务扩写的客户端调用（回填草稿）
       ui/
         config.ts                     分组与逐条字段的元数据
         CollapsibleSection.tsx        可折叠分组容器
@@ -342,6 +344,7 @@ src/components/                       两个组件各自成目录（形态参考
         Modal.tsx                     弹窗三段结构
         Panel.tsx                     conversation.input.dock 占用者（表单弹窗）
         Trigger.tsx                   conversation.input.left 占用者（入口按钮）
+      TaskTrigger.tsx               conversation.input.left 占用者（任务扩写按钮，无需 store）
         sections/                     四个分组各自的字段
           BasicSection.tsx  RulesSection.tsx  ToolsSection.tsx  OutputSection.tsx
   library/                            提示词库：检索 prompts.chat，宿主代发
@@ -362,6 +365,7 @@ src/components/                       两个组件各自成目录（形态参考
         LibraryList.tsx               列表视图（搜索行 + 状态行 + 结果列表）
         Panel.tsx                     conversation.input.dock 占用者（检索弹窗）
         Trigger.tsx                   conversation.input.left 占用者（入口按钮）
+      TaskTrigger.tsx               conversation.input.left 占用者（任务扩写按钮，无需 store）
 src/shared/                           两个组件共用的部分
   slots.ts                            槽位注册描述（两个组件的注册清单共用它）
   send.ts                             把内容发进会话（会话作用域的 conversation.send）
@@ -435,6 +439,7 @@ window.__ModuleLoader__.load({ id: 'dsh-plugin-structured-prompt', factory: requ
 | 槽位 | 组件 | 职责 |
 | --- | --- | --- |
 | `conversation.input.left`（list） | `structured/client/ui/Trigger.tsx` | 工具栏里的「结构化输入任务」按钮 |
+| `conversation.input.left`（list） | `structured/client/ui/TaskTrigger.tsx` | 工具栏里的「任务扩写」按钮（读输入框草稿 → 扩写 → 回填，不弹窗） |
 | `conversation.input.dock`（list） | `structured/client/ui/Panel.tsx` | 表单弹窗（未打开时不占空间） |
 | `conversation.input.left`（list） | `library/client/ui/Trigger.tsx` | 工具栏里的「提示词库」按钮 |
 | `conversation.input.dock`（list） | `library/client/ui/Panel.tsx` | 检索弹窗（未打开时不占空间） |

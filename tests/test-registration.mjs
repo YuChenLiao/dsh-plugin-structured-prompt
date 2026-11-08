@@ -84,9 +84,10 @@ try {
   applyError = error
 }
 check('apply() 不抛错', applyError === null, applyError === null ? '' : String(applyError))
-check('apply() 注册了四个槽位（两个组件各两条）',
-  bench.registrations.length === 4, `实际 ${bench.registrations.length}`)
-check('apply() 处理了四个 inject 目标', bench.injected.length === 4, bench.injected.join(', '))
+check('apply() 注册了五个槽位（结构化三条：两个按钮 + 一个弹窗；库两条）',
+  bench.registrations.length === 5, `实际 ${bench.registrations.length}`)
+check('apply() 处理了五个 inject 目标（工具 + 三条路由各自的 connection 作用域）',
+  bench.injected.length === 5, bench.injected.join(', '))
 // 样式注入现在由**构建产物**承担：`tools/lib/build.mjs` 的 CSS 插件把 `.css` 编译成幂等的注入
 // 模块（`style[data-plugin-css]` 去重），在 bundle 执行时自动完成。所以 apply 不该再碰 document ——
 // 否则同一份样式会被注入两次。这条断言因此反过来写。
@@ -95,7 +96,14 @@ check('apply() 不再自己注入样式（注入由构建产物承担）',
 
 // ---- 2) 关键契约：每个注册都声明 store（否则 useStore 为 undefined）----
 
+// 只有需要共享状态的注册才声明 store：「任务扩写」自管本地状态，草稿读写走宿主给的标准
+// props（`useInput` / `inputActions`），所以它不该有 store —— 声明了等于挂一个无人使用的句柄。
 for (const { options } of bench.registrations) {
+  if (options.id === 'structured-prompt-task') {
+    check(`注册「${options.name}」(${options.id}) 不声明 store（用宿主的标准 props）`,
+      options.store === undefined)
+    continue
+  }
   check(`注册「${options.name}」(${options.id}) 声明了 store 座位`,
     options.store !== undefined && typeof options.store.create === 'function')
 }
@@ -106,40 +114,53 @@ for (const entry of bench.registrations) {
   const id = String(entry.options.id)
   byId.set(id, [...(byId.get(id) ?? []), entry])
 }
-check('注册分属两个组件（各两条：入口 + 弹窗）',
-  byId.size === 2 && [...byId.values()].every(bucket => bucket.length === 2),
+check('注册分成三组：结构化（入口 + 弹窗）、任务扩写（仅入口）、提示词库（入口 + 弹窗）',
+  byId.size === 3
+  && byId.get('structured-prompt')?.length === 2
+  && byId.get('structured-prompt-task')?.length === 1
+  && [...byId.entries()].filter(([id]) => !id.startsWith('structured-prompt'))
+    .every(([, list]) => list.length === 2),
   [...byId.entries()].map(([id, list]) => `${id}×${list.length}`).join(', '))
 check('同一组件的两条注册共用同一个 store 句柄',
   [...byId.values()].every(bucket => new Set(bucket.map(entry => entry.options.store)).size === 1))
 check('两个组件用的是不同句柄（状态不耦合）',
-  new Set(bench.registrations.map(entry => entry.options.store)).size === 2)
+  new Set(bench.registrations.map(entry => entry.options.store).filter(store => store !== undefined)).size === 2)
 // 句柄的**行为契约**：只比"句柄相同/不同"抓不到"把库组件的 store 换成结构化的"—— 那两者都是
 // 合法句柄、句柄也仍然不同，只是绑错了（实测这种变异在运行期的其它断言里 0 条红）。所以按组件
 // 断言各自动作表里该有的动作。注意动作表在**实例**上（`handle.create(sessionId).actions`）。
 const actionsOf = entry => Object.keys(entry.options.store.create('probe').actions ?? {})
-const actionsById = new Map([...byId.entries()].map(([id, bucket]) => [id, actionsOf(bucket[0])]))
+const actionsById = new Map([...byId.entries()]
+  .filter(([, bucket]) => bucket[0].options.store !== undefined)
+  .map(([id, bucket]) => [id, actionsOf(bucket[0])]))
 check('结构化组件的 store 提供表单动作（setForm / setField / addTool）',
   ['setForm', 'setField', 'addTool'].every(name => actionsById.get('structured-prompt')?.includes(name)),
   JSON.stringify(actionsById.get('structured-prompt')))
 check('提示词库组件的 store 提供检索动作（patch / backToList）',
   ['patch', 'backToList', 'open', 'close'].every(name => actionsById.get('prompt-library')?.includes(name)),
   JSON.stringify(actionsById.get('prompt-library')))
-check('每个组件的入口与弹窗占两个不同槽位',
-  [...byId.values()].every(bucket =>
-    new Set(bucket.map(entry => entry.options.name)).size === 2
-    && bucket.some(entry => entry.options.name === 'conversation.input.left')
-    && bucket.some(entry => entry.options.name === 'conversation.input.dock')))
+// 「任务扩写」只占入口槽位（没有弹窗），所以只对带 store 的组检查入口 + 弹窗成对。
+check('有状态的两组各占「入口 + 弹窗」两个不同槽位',
+  [...byId.values()]
+    .filter(bucket => bucket[0].options.store !== undefined)
+    .every(bucket =>
+      new Set(bucket.map(entry => entry.options.name)).size === 2
+      && bucket.some(entry => entry.options.name === 'conversation.input.left')
+      && bucket.some(entry => entry.options.name === 'conversation.input.dock')))
 
 // ---- 3) 注册表与预期一一对应 ----
 
-const docks = [...byId.values()].map(bucket =>
-  bucket.find(entry => entry.options.name === 'conversation.input.dock'))
-check('两个组件都注册了弹窗挂载点', docks.length === 2 && docks.every(entry => entry !== undefined))
-check('入口与弹窗使用不同组件', [...byId.values()].every(bucket => {
-  const left = bucket.find(entry => entry.options.name === 'conversation.input.left')
-  const dock = bucket.find(entry => entry.options.name === 'conversation.input.dock')
-  return left?.component !== undefined && dock?.component !== undefined && left.component !== dock.component
-}))
+// 「任务扩写」只占入口槽位、没有弹窗，所以按「有弹窗的组」来数。
+const docks = [...byId.values()]
+  .map(bucket => bucket.find(entry => entry.options.name === 'conversation.input.dock'))
+  .filter(entry => entry !== undefined)
+check('两个带状态的组件都注册了弹窗挂载点', docks.length === 2)
+check('入口与弹窗使用不同组件', [...byId.values()]
+  .filter(bucket => bucket.some(entry => entry.options.name === 'conversation.input.dock'))
+  .every(bucket => {
+    const left = bucket.find(entry => entry.options.name === 'conversation.input.left')
+    const dock = bucket.find(entry => entry.options.name === 'conversation.input.dock')
+    return left?.component !== undefined && dock?.component !== undefined && left.component !== dock.component
+  }))
 
 // ---- 3b) 发送链路：每个组件的 inject 面都把内容投进该会话 ----
 

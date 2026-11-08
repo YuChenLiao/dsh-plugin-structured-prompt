@@ -194,3 +194,50 @@ export function readDefaultModel(contexts: readonly LookupContext[]): ModelLooku
     ? { reason: '默认模型里没有可用的 provider / model' }
     : { selection: picked }
 }
+
+/** 实际要用的模型路由。 */
+export interface ModelRoute {
+  /** provider 路由名。 */
+  readonly provider: string
+  /** 模型 id。 */
+  readonly model: string
+  /** 推理强度（可选）。 */
+  readonly reasoningEffort?: string
+}
+
+/** 路由解析结果。 */
+export interface ModelRouteLookup {
+  /** 解析出的路由。 */
+  readonly route?: ModelRoute
+  /** 三级都落空时的原因（两级各缺什么）。 */
+  readonly reason?: string
+}
+
+/**
+ * 按「会话模型 → 宿主默认模型 → 装载行配置」解析实际要用的模型。
+ *
+ * 顺序与 DSH 自己的回退链对齐（`session-controller/src/agent.ts:283-291`）：新会话还没有模型选择
+ * 时，中间那一级保证仍然能跑；配置只是最低优先级的兜底。
+ * @param contexts - 上下文（作用域在前、外层在后）。
+ * @param sessionId - 目标会话。
+ * @param config - 装载行配置（最低优先级）。
+ * @returns 路由，或三级都失败时的原因。
+ */
+export function resolveModelRoute(
+  contexts: readonly LookupContext[],
+  sessionId: string,
+  config: { readonly assistProvider?: string; readonly assistModel?: string },
+): ModelRouteLookup {
+  const live = (Array.isArray(contexts) ? contexts : [contexts as LookupContext])
+    .filter(context => context !== undefined && context !== null)
+  const session = readSessionModel(live, sessionId)
+  if (session.selection !== undefined) return { route: session.selection }
+  const fallback = readDefaultModel(live)
+  if (fallback.selection !== undefined) return { route: fallback.selection }
+  if (config.assistProvider !== undefined && config.assistModel !== undefined) {
+    return { route: { provider: config.assistProvider, model: config.assistModel } }
+  }
+  return {
+    reason: `会话模型：${session.reason ?? '未知'}；默认模型：${fallback.reason ?? '未知'}`,
+  }
+}
